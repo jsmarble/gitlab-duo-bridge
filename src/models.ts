@@ -52,20 +52,24 @@ const MODELS: ModelEntry[] = [
   },
   {
     id: "gpt-5-codex",
-    aliases: ["gpt-5-codex"],
+    aliases: [],
     backend: "openai",
     upstreamModel: "gpt-5-codex",
   },
 ];
 
+// Build an O(1) lookup index over primary ids and aliases at module load.
+const MODEL_INDEX = new Map<string, ModelEntry>();
+for (const entry of MODELS) {
+  MODEL_INDEX.set(entry.id, entry);
+  for (const alias of entry.aliases) {
+    MODEL_INDEX.set(alias, entry);
+  }
+}
+
 /** Look up a model by primary id or any alias. Returns undefined if not found. */
 export function lookupModel(modelId: string): ModelEntry | undefined {
-  for (const entry of MODELS) {
-    if (entry.id === modelId || entry.aliases.includes(modelId)) {
-      return entry;
-    }
-  }
-  return undefined;
+  return MODEL_INDEX.get(modelId);
 }
 
 /** All registered models (for /v1/models and dashboard). */

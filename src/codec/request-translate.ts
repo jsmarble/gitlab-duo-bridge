@@ -113,6 +113,14 @@ function extractSystemText(
   return system.map((b) => b.text).join("\n");
 }
 
+// ---- Helper: flatten OpenAI Chat message content to plain text ----
+
+function chatContentToText(content: ChatMessage["content"]): string {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  return content.map((p) => p.text ?? "").join("");
+}
+
 // ---- Translator 1: Anthropic -> Anthropic (identity with model rewrite) ----
 
 export function anthropicToAnthropic(
@@ -352,10 +360,11 @@ export function chatCompletionsToAnthropic(
   req: ChatCompletionsRequest,
   upstreamModel: string
 ): AnthropicMessagesRequest {
-  // Extract system message
+  // Extract system message (content may be a string or an array of parts)
   const systemMessages = req.messages.filter((m) => m.role === "system");
   const systemText = systemMessages
-    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .map((m) => chatContentToText(m.content))
+    .filter(Boolean)
     .join("\n");
 
   // Convert non-system messages
@@ -371,25 +380,15 @@ export function chatCompletionsToAnthropic(
           {
             type: "tool_result",
             tool_use_id: msg.tool_call_id ?? "",
-            content:
-              typeof msg.content === "string"
-                ? msg.content
-                : msg.content
-                ? msg.content.map((p) => p.text ?? "").join("")
-                : "",
+            content: chatContentToText(msg.content),
           },
         ],
       });
     } else if (msg.role === "assistant" && msg.tool_calls) {
       // Assistant with tool calls -> tool_use blocks
       const content: AnthropicContentBlock[] = [];
-      if (msg.content) {
-        const text =
-          typeof msg.content === "string"
-            ? msg.content
-            : msg.content.map((p) => p.text ?? "").join("");
-        if (text) content.push({ type: "text", text });
-      }
+      const text = chatContentToText(msg.content);
+      if (text) content.push({ type: "text", text });
       for (const tc of msg.tool_calls) {
         let input: unknown = {};
         try {
@@ -414,7 +413,7 @@ export function chatCompletionsToAnthropic(
   }
 
   // Convert tools
-  const tools: AnthropicTool[] | undefined = req.tools?.map((t) => ({
+  let tools: AnthropicTool[] | undefined = req.tools?.map((t) => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters ?? { type: "object", properties: {} },
@@ -428,7 +427,10 @@ export function chatCompletionsToAnthropic(
     } else if (req.tool_choice === "required" || req.tool_choice === "any") {
       toolChoice = { type: "any" };
     } else if (req.tool_choice === "none") {
+      // Anthropic has no portable "none" tool_choice. Dropping the tools
+      // entirely is the only cross-version-safe way to guarantee no tool use.
       toolChoice = undefined;
+      tools = undefined;
     } else if (typeof req.tool_choice === "object") {
       toolChoice = { type: "tool", name: req.tool_choice.function.name };
     }

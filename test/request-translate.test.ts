@@ -357,4 +357,40 @@ describe("chatCompletionsToAnthropic", () => {
     };
     expect(() => chatCompletionsToAnthropic(req, "upstream")).not.toThrow();
   });
+
+  it("extracts system prompt when system content is an array of parts", () => {
+    const req: ChatCompletionsRequest = {
+      model: "claude-sonnet-4-5",
+      messages: [
+        {
+          role: "system",
+          content: [
+            { type: "text", text: "You are " },
+            { type: "text", text: "helpful." },
+          ],
+        },
+        { role: "user", content: "Hi" },
+      ],
+    };
+    const result = chatCompletionsToAnthropic(req, "upstream");
+    expect(result.system).toBe("You are helpful.");
+  });
+
+  it("drops tools entirely when tool_choice is 'none'", () => {
+    const req: ChatCompletionsRequest = {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [
+        {
+          type: "function",
+          function: { name: "get_weather", parameters: { type: "object" } },
+        },
+      ],
+      tool_choice: "none",
+    };
+    const result = chatCompletionsToAnthropic(req, "upstream");
+    // Anthropic has no portable "none"; the only safe mapping is to drop tools.
+    expect(result.tools).toBeUndefined();
+    expect(result.tool_choice).toBeUndefined();
+  });
 });

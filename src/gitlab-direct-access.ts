@@ -108,18 +108,13 @@ export async function getDirectAccessToken(): Promise<DirectAccessToken> {
     );
   }
 
-  // Start a new refresh
-  _inflight = fetchDirectAccessToken(pat).then(
-    (token) => {
-      _cached = token;
-      _inflight = null;
-      return token;
-    },
-    (err) => {
-      _inflight = null;
-      throw err;
-    }
-  );
+  // Start a new refresh. Clear _inflight in a finally so there is no window
+  // where a settled promise remains referenced and a late caller could start
+  // a second concurrent fetch.
+  _inflight = fetchDirectAccessToken(pat).then((token) => {
+    _cached = token;
+    return token;
+  });
 
   try {
     return await _inflight;
@@ -134,6 +129,8 @@ export async function getDirectAccessToken(): Promise<DirectAccessToken> {
       return _cached;
     }
     throw err;
+  } finally {
+    _inflight = null;
   }
 }
 

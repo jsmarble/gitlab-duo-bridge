@@ -27,10 +27,13 @@ export function* parseSseLines(text: string): Generator<SseLine> {
       }
     } else if (line.startsWith(":")) {
       // Comment line — ignore per SSE spec
-    } else if (line.startsWith("event: ")) {
-      current.event = line.slice(7).trim();
-    } else if (line.startsWith("data: ")) {
-      const chunk = line.slice(6);
+    } else if (line.startsWith("event:")) {
+      // Per SSE spec, a single leading space after the colon is stripped.
+      current.event = line.slice(6).replace(/^ /, "").trim();
+    } else if (line.startsWith("data:")) {
+      // Per SSE spec, a single leading space after the colon is stripped
+      // (and only one — do not trim, remaining whitespace may be significant).
+      const chunk = line.slice(5).replace(/^ /, "");
       // Per SSE spec, multiple data: lines are joined with \n
       if (current.data !== undefined) {
         current.data = current.data + "\n" + chunk;

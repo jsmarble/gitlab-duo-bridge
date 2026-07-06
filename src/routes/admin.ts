@@ -14,7 +14,9 @@ import { getActivity } from "../activity-log.ts";
 import { config } from "../config.ts";
 import {
   getDirectAccessToken,
+  invalidateDirectAccessToken,
 } from "../gitlab-direct-access.ts";
+import { log } from "../logger.ts";
 
 // ---- HTML Dashboard ----
 
@@ -256,24 +258,34 @@ export async function handleAdmin(req: Request): Promise<Response> {
     });
   }
 
-  // API routes
-  if (path === "/admin/api/status" && req.method === "GET") {
-    return handleApiStatus();
-  }
-  if (path === "/admin/api/pat" && req.method === "POST") {
-    return handleApiPatSet(req);
-  }
-  if (path === "/admin/api/pat/test" && req.method === "POST") {
-    return handleApiPatTest();
-  }
-  if (path === "/admin/api/pat" && req.method === "DELETE") {
-    return handleApiPatClear();
-  }
-  if (path === "/admin/api/models" && req.method === "GET") {
-    return handleApiModels();
-  }
-  if (path === "/admin/api/activity" && req.method === "GET") {
-    return handleApiActivity();
+  // API routes — wrapped so a malformed request can never produce an
+  // unhandled rejection / raw 500 from the top-level server handler.
+  try {
+    if (path === "/admin/api/status" && req.method === "GET") {
+      return handleApiStatus();
+    }
+    if (path === "/admin/api/pat" && req.method === "POST") {
+      return await handleApiPatSet(req);
+    }
+    if (path === "/admin/api/pat/test" && req.method === "POST") {
+      return await handleApiPatTest();
+    }
+    if (path === "/admin/api/pat" && req.method === "DELETE") {
+      return await handleApiPatClear();
+    }
+    if (path === "/admin/api/models" && req.method === "GET") {
+      return handleApiModels();
+    }
+    if (path === "/admin/api/activity" && req.method === "GET") {
+      return handleApiActivity();
+    }
+  } catch (err) {
+    log(
+      "error",
+      "[admin] API handler error:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 
   return Response.json({ error: "Not found" }, { status: 404 });
@@ -306,9 +318,6 @@ async function handleApiPatSet(req: Request): Promise<Response> {
 
   await setGitlabPat(pat);
   // Invalidate cached direct-access token so next request re-fetches
-  const { invalidateDirectAccessToken } = await import(
-    "../gitlab-direct-access.ts"
-  );
   invalidateDirectAccessToken();
 
   return Response.json({
@@ -328,9 +337,6 @@ async function handleApiPatTest(): Promise<Response> {
 
   try {
     // Force a fresh token fetch by invalidating first
-    const { invalidateDirectAccessToken } = await import(
-      "../gitlab-direct-access.ts"
-    );
     invalidateDirectAccessToken();
 
     const token = await getDirectAccessToken();
@@ -351,9 +357,6 @@ async function handleApiPatTest(): Promise<Response> {
 
 async function handleApiPatClear(): Promise<Response> {
   await clearGitlabPat();
-  const { invalidateDirectAccessToken } = await import(
-    "../gitlab-direct-access.ts"
-  );
   invalidateDirectAccessToken();
   return Response.json({ success: true });
 }

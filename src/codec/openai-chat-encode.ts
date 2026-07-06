@@ -264,7 +264,10 @@ export async function encodeOpenAIChatJSON(
   };
 
   if (toolCalls.size > 0) {
-    message.content = null;
+    // Preserve any accumulated text alongside tool calls (both Anthropic and
+    // OpenAI models can emit text before/with tool calls). content stays null
+    // only when there was no text.
+    message.content = textAccum || null;
     message.tool_calls = Array.from(toolCalls.entries()).map(([, tc]) => ({
       id: tc.id,
       type: "function" as const,

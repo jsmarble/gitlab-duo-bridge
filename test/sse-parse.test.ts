@@ -60,6 +60,21 @@ describe("parseSseLines", () => {
     expect(results[0].data).toBe("just data");
     expect(results[0].event).toBeUndefined();
   });
+
+  it("tolerates data lines with no space after the colon (SSE spec)", () => {
+    const input = 'data:{"key":"val"}\n\n';
+    const results = Array.from(parseSseLines(input));
+    expect(results).toHaveLength(1);
+    expect(results[0].data).toBe('{"key":"val"}');
+  });
+
+  it("strips only a single leading space after data: (preserves further whitespace)", () => {
+    const input = "data:  two-leading-spaces\n\n";
+    const results = Array.from(parseSseLines(input));
+    expect(results).toHaveLength(1);
+    // One space stripped per spec; the second space is preserved.
+    expect(results[0].data).toBe(" two-leading-spaces");
+  });
 });
 
 describe("readSseEvents", () => {

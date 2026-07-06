@@ -32,13 +32,6 @@ async function buildHeaders(
   };
 }
 
-export interface GatewayResponse {
-  ok: boolean;
-  status: number;
-  body: ReadableStream<Uint8Array> | null;
-  json: () => Promise<unknown>;
-}
-
 /**
  * Call the Anthropic proxy. Returns the raw Response for streaming.
  * Invalidates the direct-access token on 401.

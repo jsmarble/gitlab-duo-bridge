@@ -602,4 +602,21 @@ describe("encodeOpenAIChatJSON", () => {
     expect(result.choices[0].message.tool_calls![0].function.name).toBe("get_weather");
     expect(result.choices[0].finish_reason).toBe("tool_calls");
   });
+
+  it("preserves text content alongside tool calls (does not drop leading text)", async () => {
+    async function* events(): AsyncGenerator<InternalEvent> {
+      yield { type: "start", model: "gpt-5.1", id: "chatcmpl-03" };
+      yield { type: "text_delta", text: "Let me check that for you." };
+      yield { type: "tool_call_start", id: "call_xyz", name: "get_weather", index: 0 };
+      yield { type: "tool_call_delta", id: "call_xyz", argsDelta: '{"city":"Paris"}', index: 0 };
+      yield { type: "tool_call_end", id: "call_xyz", index: 0 };
+      yield { type: "stop", reason: "tool_calls" };
+    }
+
+    const result = await encodeOpenAIChatJSON(events());
+    // Text must survive when tool calls are also present.
+    expect(result.choices[0].message.content).toBe("Let me check that for you.");
+    expect(result.choices[0].message.tool_calls).toHaveLength(1);
+    expect(result.choices[0].finish_reason).toBe("tool_calls");
+  });
 });

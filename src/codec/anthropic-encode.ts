@@ -62,6 +62,7 @@ export function encodeAnthropicSSE(
     async start(controller) {
       const state = makeState();
       let contentBlockCount = 0;
+      let stopped = false;
 
       try {
         for await (const event of events) {
@@ -189,6 +190,7 @@ export function encodeAnthropicSSE(
               controller.enqueue(
                 sseEvent("message_stop", { type: "message_stop" })
               );
+              stopped = true;
               break;
             }
 
@@ -201,16 +203,20 @@ export function encodeAnthropicSSE(
           }
         }
       } catch (err) {
-        controller.enqueue(
-          sseEvent("error", {
-            type: "error",
-            error: {
-              type: "api_error",
-              message:
-                err instanceof Error ? err.message : "Internal server error",
-            },
-          })
-        );
+        // Don't emit an error event if the stream already completed cleanly
+        // (would produce a malformed message_stop-then-error sequence).
+        if (!stopped) {
+          controller.enqueue(
+            sseEvent("error", {
+              type: "error",
+              error: {
+                type: "api_error",
+                message:
+                  err instanceof Error ? err.message : "Internal server error",
+              },
+            })
+          );
+        }
       } finally {
         controller.close();
       }

@@ -13,7 +13,7 @@ describe("model registry", () => {
     expect(model?.upstreamModel).toBe("claude-sonnet-4-5-20250929");
   });
 
-  it("looks up model by alias (upstream id)", () => {
+  it("looks up model by alias (dated upstream id)", () => {
     const model = lookupModel("claude-sonnet-4-5-20250929");
     expect(model).toBeDefined();
     expect(model?.id).toBe("claude-sonnet-4-5");
@@ -33,27 +33,55 @@ describe("model registry", () => {
     expect(model?.id).toBe("gpt-5.1");
   });
 
-  it("returns undefined for unknown model (does not throw)", () => {
-    const model = lookupModel("gpt-99-unknown");
-    expect(model).toBeUndefined();
+  it("includes current Claude models (opus/sonnet 4.6, sonnet 5)", () => {
+    expect(lookupModel("claude-opus-4-6")?.upstreamModel).toBe("claude-opus-4-6");
+    expect(lookupModel("claude-sonnet-4-6")?.upstreamModel).toBe("claude-sonnet-4-6");
+    expect(lookupModel("claude-sonnet-5")?.backend).toBe("anthropic");
+  });
+
+  it("includes current GPT models (5.2, 5.4, 5.5, 5.4-mini)", () => {
+    expect(lookupModel("gpt-5.4")?.upstreamModel).toBe("gpt-5.4-2026-03-05");
+    expect(lookupModel("gpt-5.5")?.upstreamModel).toBe("gpt-5.5-2026-04-23");
+    expect(lookupModel("gpt-5.2")?.upstreamModel).toBe("gpt-5.2-2025-12-11");
+    expect(lookupModel("gpt-5.4-mini")?.backend).toBe("openai");
+  });
+
+  it("falls back to prefix inference for unlisted Claude models (pass-through)", () => {
+    // Not in the curated list, but claude* -> anthropic, id sent as-is.
+    const m = lookupModel("claude-opus-4-99");
+    expect(m).toBeDefined();
+    expect(m?.backend).toBe("anthropic");
+    expect(m?.upstreamModel).toBe("claude-opus-4-99");
+  });
+
+  it("falls back to prefix inference for unlisted GPT models (pass-through)", () => {
+    const m = lookupModel("gpt-6-turbo");
+    expect(m).toBeDefined();
+    expect(m?.backend).toBe("openai");
+    expect(m?.upstreamModel).toBe("gpt-6-turbo");
+  });
+
+  it("returns undefined when the provider family can't be inferred", () => {
+    expect(lookupModel("mystery-model-x")).toBeUndefined();
+    expect(lookupModel("llama-3")).toBeUndefined();
   });
 
   it("returns undefined for empty string", () => {
-    const model = lookupModel("");
-    expect(model).toBeUndefined();
+    expect(lookupModel("")).toBeUndefined();
   });
 
-  it("lists all models", () => {
+  it("listModels returns only the curated set (not fallback-resolved ids)", () => {
     const models = listModels();
     expect(models.length).toBeGreaterThan(0);
-    // Should have both anthropic and openai models
     expect(models.some((m) => m.backend === "anthropic")).toBe(true);
     expect(models.some((m) => m.backend === "openai")).toBe(true);
+    // Fallback-only ids must not leak into the discovery list.
+    expect(models.some((m) => m.id === "gpt-6-turbo")).toBe(false);
+    expect(models.some((m) => m.id === "claude-opus-4-99")).toBe(false);
   });
 
-  it("all models have required fields", () => {
-    const models = listModels();
-    for (const m of models) {
+  it("all listed models have required fields", () => {
+    for (const m of listModels()) {
       expect(m.id).toBeTruthy();
       expect(m.backend).toMatch(/^(anthropic|openai)$/);
       expect(m.upstreamModel).toBeTruthy();
@@ -61,23 +89,8 @@ describe("model registry", () => {
     }
   });
 
-  it("claude-opus-4-5 resolves correctly", () => {
-    const m = lookupModel("claude-opus-4-5");
-    expect(m?.upstreamModel).toBe("claude-opus-4-5-20251101");
-  });
-
-  it("claude-haiku-4-5 resolves correctly", () => {
-    const m = lookupModel("claude-haiku-4-5");
-    expect(m?.upstreamModel).toBe("claude-haiku-4-5-20251001");
-  });
-
-  it("gpt-5-mini resolves correctly", () => {
-    const m = lookupModel("gpt-5-mini");
-    expect(m?.upstreamModel).toBe("gpt-5-mini-2025-08-07");
-  });
-
-  it("gpt-5-codex resolves correctly", () => {
-    const m = lookupModel("gpt-5-codex");
-    expect(m?.upstreamModel).toBe("gpt-5-codex");
+  it("claude-opus-4-5 / haiku-4-5 keep their dated upstream ids", () => {
+    expect(lookupModel("claude-opus-4-5")?.upstreamModel).toBe("claude-opus-4-5-20251101");
+    expect(lookupModel("claude-haiku-4-5")?.upstreamModel).toBe("claude-haiku-4-5-20251001");
   });
 });

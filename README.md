@@ -86,14 +86,29 @@ Endpoint: POST /v1/chat/completions
 
 | Client Model ID | Backend | Upstream Model |
 |---|---|---|
+| `claude-opus-4-8` | Anthropic | `claude-opus-4-8` |
+| `claude-opus-4-7` | Anthropic | `claude-opus-4-7` |
+| `claude-opus-4-6` | Anthropic | `claude-opus-4-6` |
 | `claude-opus-4-5` | Anthropic | `claude-opus-4-5-20251101` |
+| `claude-sonnet-5` | Anthropic | `claude-sonnet-5` |
+| `claude-sonnet-4-6` | Anthropic | `claude-sonnet-4-6` |
 | `claude-sonnet-4-5` | Anthropic | `claude-sonnet-4-5-20250929` |
 | `claude-haiku-4-5` | Anthropic | `claude-haiku-4-5-20251001` |
+| `gpt-5.5` | OpenAI | `gpt-5.5-2026-04-23` |
+| `gpt-5.4` | OpenAI | `gpt-5.4-2026-03-05` |
+| `gpt-5.2` | OpenAI | `gpt-5.2-2025-12-11` |
 | `gpt-5.1` | OpenAI | `gpt-5.1-2025-11-13` |
-| `gpt-5-mini` | OpenAI | `gpt-5-mini-2025-08-07` |
-| `gpt-5-codex` | OpenAI | `gpt-5-codex` |
+| `gpt-5.4-mini` | OpenAI | `gpt-5.4-mini` |
+| `gpt-5.4-nano` | OpenAI | `gpt-5.4-nano` |
 
-Upstream model IDs are also accepted directly as aliases.
+Dated upstream IDs are also accepted directly as aliases (e.g. `gpt-5.4-2026-03-05`).
+
+This list mirrors the proxy-routable models in GitLab's model-selection manifest.
+It's a curated snapshot for discovery — **routing is not limited to it**: any
+`claude*` id routes to the Anthropic backend and any `gpt*`/`o*` id to the OpenAI
+backend and is passed through as-is, so a model GitLab ships after this build works
+by exact id even before it's listed here. To refresh the list from GitLab's
+manifest, load the `rebuild-model-registry` skill (`.opencode/skills/`).
 
 > **GPT-5 note:** the OpenAI-backed models are reasoning models. Reasoning
 > tokens count against the completion budget, so a very small limit can be

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ["v*"]
   pull_request:
     branches: [main, master]
 
@@ -28,15 +29,84 @@ jobs:
         run: bun test
 
   docker:
-    name: Docker Build
+    name: Build & Push Image
     runs-on: ubuntu-latest
     needs: test
 
+    permissions:
+      contents: write # create git tag + GitHub Release
+      packages: write # push image to GHCR
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the version can be computed from commits/tags
+
+      # Compute the next semantic version from Conventional Commits since the
+      # last v* tag. Default bump is patch; `feat:` -> minor; a `!` after the
+      # type/scope or `BREAKING CHANGE` in the body -> major.
+      - name: Compute version
+        id: version
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          version_format: "${major}.${minor}.${patch}"
+          major_pattern: '/^\w+(\(.+\))?!:|BREAKING[ -]CHANGE/'
+          minor_pattern: '/^feat(\(.+\))?:/'
+          search_commit_body: true
+          bump_each_commit: false
+
+      # QEMU enables cross-building the linux/arm64 image on the amd64 runner.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        run: docker build -t gitlab-duo-bridge:ci .
+      # Only authenticate when we actually intend to push (never on PRs from forks).
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (labels, annotations)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Version-derived tags are pushed on branch/tag builds; PRs get pr-N only.
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=pr
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # Build (validate both arches) on every event; push only on branch/tag pushes.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Anchor the version: create the git tag + GitHub Release on default-branch
+      # pushes. Tags created with GITHUB_TOKEN do not recursively re-trigger CI.
+      - name: Create release
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version_tag }}
+          name: ${{ steps.version.outputs.version_tag }}
+          generate_release_notes: true
+          make_latest: true

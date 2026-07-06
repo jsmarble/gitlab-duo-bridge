@@ -35,7 +35,7 @@ function loadConfig(): Config {
     proxyApiKey,
     dataDir: process.env.DATA_DIR ?? "/data",
     logLevel,
-    version: "0.1.0",
+    version: process.env.APP_VERSION ?? "0.0.0-dev",
   };
 }
 

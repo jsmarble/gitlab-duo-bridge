@@ -38,6 +38,11 @@ RUN mkdir -p /data && chown appuser:appgroup /data
 # Switch to non-root user
 USER appuser
 
+# Version stamped in at build time (defaults for local/dev builds).
+# Set via: docker build --build-arg APP_VERSION=1.2.3
+ARG APP_VERSION=0.0.0-dev
+ENV APP_VERSION=$APP_VERSION
+
 # Expose default port
 EXPOSE 3000
 

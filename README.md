@@ -91,6 +91,41 @@ Upstream model IDs are also accepted directly as aliases.
 | `GET` | `/admin` | None | Admin dashboard |
 | `GET/POST/DELETE` | `/admin/api/*` | None | Dashboard API |
 
+## Container Images
+
+Multi-arch (`linux/amd64`, `linux/arm64`) images are published to GitHub Container Registry on every push to the default branch:
+
+```bash
+docker pull ghcr.io/jsmarble/gitlab-duo-bridge:latest
+# or pin a specific version / minor line / commit:
+docker pull ghcr.io/jsmarble/gitlab-duo-bridge:1.4.2
+docker pull ghcr.io/jsmarble/gitlab-duo-bridge:1.4
+docker pull ghcr.io/jsmarble/gitlab-duo-bridge:sha-abc1234
+```
+
+Available tags:
+
+| Tag | Meaning |
+|---|---|
+| `latest` | Most recent default-branch build |
+| `X.Y.Z` | Exact semantic version (immutable) |
+| `X.Y` | Latest patch on that minor line |
+| `sha-<short>` | Exact commit, for precise pinning |
+
+The running image self-reports its version (baked in at build time via the `APP_VERSION` build arg) in the `User-Agent` it sends to GitLab's AI Gateway.
+
+## Versioning
+
+Versions are derived automatically on every build from [Conventional Commits](https://www.conventionalcommits.org/) since the last release tag — no manual version bumping:
+
+| Commit prefix | Bump | Example |
+|---|---|---|
+| `fix:`, `chore:`, `docs:`, `refactor:`, … | patch | `1.4.2` → `1.4.3` |
+| `feat:` | minor | `1.4.2` → `1.5.0` |
+| `feat!:` / `fix!:` / `BREAKING CHANGE:` in body | major | `1.4.2` → `2.0.0` |
+
+Each default-branch build computes the next version, publishes the image with the tags above, and creates a matching git tag + GitHub Release (with auto-generated notes). Pull requests build both architectures for validation but do not push or release.
+
 ## Security Notes
 
 ### PAT Storage

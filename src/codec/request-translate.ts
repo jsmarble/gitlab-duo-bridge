@@ -96,6 +96,7 @@ export interface ChatCompletionsRequest {
   messages: ChatMessage[];
   stream?: boolean;
   max_tokens?: number;
+  max_completion_tokens?: number;
   temperature?: number;
   top_p?: number;
   stop?: string | string[];
@@ -293,7 +294,9 @@ export function anthropicToOpenAIChat(
     model: upstreamModel,
     messages,
     stream: req.stream,
-    max_tokens: req.max_tokens,
+    // GitLab's OpenAI (GPT-5) proxy rejects the legacy `max_tokens` param and
+    // requires `max_completion_tokens`.
+    max_completion_tokens: req.max_tokens,
     temperature: req.temperature,
     top_p: req.top_p,
     stop,
@@ -312,7 +315,9 @@ export function chatToOpenAIChat(
     model: upstreamModel,
     messages: req.messages,
     stream: req.stream,
-    max_tokens: req.max_tokens,
+    // Normalize to max_completion_tokens (GPT-5 models reject max_tokens).
+    // Accept either field from the client.
+    max_completion_tokens: req.max_completion_tokens ?? req.max_tokens,
     temperature: req.temperature,
     top_p: req.top_p,
     stop: req.stop,

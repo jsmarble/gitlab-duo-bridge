@@ -39,7 +39,9 @@ async function buildHeaders(
 export async function callAnthropicProxy(
   requestBody: unknown
 ): Promise<Response> {
-  const headers = await buildHeaders();
+  // GitLab's Anthropic proxy forwards to the Anthropic Messages API, which
+  // requires the anthropic-version header. Without it the gateway returns 400.
+  const headers = await buildHeaders({ "anthropic-version": "2023-06-01" });
   const resp = await fetch(ANTHROPIC_PROXY_URL, {
     method: "POST",
     headers,

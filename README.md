@@ -95,6 +95,13 @@ Endpoint: POST /v1/chat/completions
 
 Upstream model IDs are also accepted directly as aliases.
 
+> **GPT-5 note:** the OpenAI-backed models are reasoning models. Reasoning
+> tokens count against the completion budget, so a very small limit can be
+> consumed entirely by reasoning and return empty content. Give them adequate
+> room (e.g. a few hundred tokens). Clients may send either `max_tokens` or
+> `max_completion_tokens`; the bridge forwards it as `max_completion_tokens`,
+> which GitLab's GPT-5 proxy requires.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

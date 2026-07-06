@@ -144,7 +144,9 @@ describe("anthropicToOpenAIChat", () => {
   it("converts simple message — user content becomes user message", () => {
     const result = anthropicToOpenAIChat(simpleAnthropicReq, "gpt-5.1-2025-11-13");
     expect(result.model).toBe("gpt-5.1-2025-11-13");
-    expect(result.max_tokens).toBe(1024);
+    // Anthropic max_tokens maps to OpenAI max_completion_tokens for GPT-5.
+    expect(result.max_completion_tokens).toBe(1024);
+    expect(result.max_tokens).toBeUndefined();
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].role).toBe("user");
     expect(result.messages[0].content).toBe("Hello, world!");
@@ -281,7 +283,7 @@ describe("chatToOpenAIChat (model rewrite passthrough)", () => {
     expect(result.tool_choice).toBe("auto");
   });
 
-  it("passes through temperature, top_p, max_tokens, stop, stream", () => {
+  it("maps token limit to max_completion_tokens and passes through temperature, top_p, stop, stream", () => {
     const req: ChatCompletionsRequest = {
       model: "gpt-5.1",
       messages: [{ role: "user", content: "hi" }],
@@ -294,9 +296,22 @@ describe("chatToOpenAIChat (model rewrite passthrough)", () => {
     const result = chatToOpenAIChat(req, "gpt-5.1-upstream");
     expect(result.temperature).toBe(0.7);
     expect(result.top_p).toBe(0.9);
-    expect(result.max_tokens).toBe(256);
+    // GPT-5 models reject max_tokens; must be sent as max_completion_tokens.
+    expect(result.max_completion_tokens).toBe(256);
+    expect(result.max_tokens).toBeUndefined();
     expect(result.stop).toEqual(["END"]);
     expect(result.stream).toBe(true);
+  });
+
+  it("prefers an explicit max_completion_tokens from the client", () => {
+    const req: ChatCompletionsRequest = {
+      model: "gpt-5.1",
+      messages: [{ role: "user", content: "hi" }],
+      max_completion_tokens: 128,
+    };
+    const result = chatToOpenAIChat(req, "gpt-5.1-upstream");
+    expect(result.max_completion_tokens).toBe(128);
+    expect(result.max_tokens).toBeUndefined();
   });
 });
 

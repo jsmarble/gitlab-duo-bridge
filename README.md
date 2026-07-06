@@ -13,14 +13,32 @@ This bridge handles the token exchange, caching, and refresh transparently, then
 
 ## Quick Start
 
-### With Docker Compose
+### Docker (single container)
+
+```bash
+# Generate a strong client key (save it — clients present it as a Bearer token)
+export PROXY_API_KEY="$(openssl rand -hex 32)"
+
+docker run -d --name gitlab-duo-bridge \
+  -p 127.0.0.1:3000:3000 \
+  -e PROXY_API_KEY="$PROXY_API_KEY" \
+  -v duo_bridge_data:/data \
+  ghcr.io/jsmarble/gitlab-duo-bridge:latest
+
+# Open the admin dashboard to configure your GitLab PAT
+open http://localhost:3000/admin
+```
+
+The `-v duo_bridge_data:/data` volume persists the stored GitLab PAT across restarts. The port is bound to `127.0.0.1` so the (unauthenticated) admin dashboard is not exposed publicly.
+
+### Docker Compose
 
 ```bash
 # 1. Copy and edit the env file
 cp .env.example .env
 # Edit .env: set PROXY_API_KEY to a strong random value
 
-# 2. Copy the example compose file
+# 2. Copy the example compose file (it pulls ghcr.io/jsmarble/gitlab-duo-bridge)
 cp docker-compose.example.yml docker-compose.yml
 # Edit docker-compose.yml: fill in your manifest service image
 
@@ -30,6 +48,12 @@ docker compose up -d
 # 4. Open the admin dashboard to configure your GitLab PAT
 open http://localhost:3000/admin
 ```
+
+> **Note:** GHCR packages default to **private**. To pull the image, either make the
+> package public (repo → Packages → package settings), or authenticate first:
+> `echo $GITHUB_TOKEN | docker login ghcr.io -u <username> --password-stdin`.
+> To build locally instead of pulling, use `docker build -t gitlab-duo-bridge .`
+> and set `build: .` in the compose file.
 
 ### Local Development
 

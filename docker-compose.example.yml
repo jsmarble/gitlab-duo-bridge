@@ -1,10 +1,10 @@
-version: "3.9"
-
 services:
   gitlab-duo-bridge:
-    image: gitlab-duo-bridge:latest
-    # Or build locally:
-    # build: .
+    image: ghcr.io/jsmarble/gitlab-duo-bridge:latest
+    # Pin a specific version in production, e.g.:
+    #   image: ghcr.io/jsmarble/gitlab-duo-bridge:1.0.0
+    # Or build locally instead of pulling:
+    #   build: .
     restart: unless-stopped
     ports:
       # Expose admin dashboard on localhost only — do NOT expose publicly
@@ -19,12 +19,8 @@ services:
       - duo_bridge_data:/data
     networks:
       - internal
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    # No healthcheck override needed — the image ships its own bun-based
+    # HEALTHCHECK (hitting /health). Compose honors it for service_healthy.
 
   # Placeholder for the "Manifest" service that consumes this bridge.
   # Point Manifest's custom provider at:

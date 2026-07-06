@@ -5,8 +5,8 @@
 import { describe, it, expect } from "bun:test";
 import {
   anthropicToAnthropic,
-  anthropicToOpenAIResponses,
-  chatCompletionsToOpenAIResponses,
+  anthropicToOpenAIChat,
+  chatToOpenAIChat,
   chatCompletionsToAnthropic,
   type AnthropicMessagesRequest,
   type ChatCompletionsRequest,
@@ -140,183 +140,163 @@ describe("anthropicToAnthropic (identity + model rewrite)", () => {
   });
 });
 
-describe("anthropicToOpenAIResponses", () => {
-  it("converts simple message", () => {
-    const result = anthropicToOpenAIResponses(simpleAnthropicReq, "gpt-5.1-2025-11-13");
+describe("anthropicToOpenAIChat", () => {
+  it("converts simple message — user content becomes user message", () => {
+    const result = anthropicToOpenAIChat(simpleAnthropicReq, "gpt-5.1-2025-11-13");
     expect(result.model).toBe("gpt-5.1-2025-11-13");
-    expect(result.max_output_tokens).toBe(1024);
-    expect(Array.isArray(result.input)).toBe(true);
-    const input = result.input as Array<{ type: string; role: string; content: unknown }>;
-    expect(input[0].role).toBe("user");
+    expect(result.max_tokens).toBe(1024);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].role).toBe("user");
+    expect(result.messages[0].content).toBe("Hello, world!");
   });
 
-  it("includes system message when present", () => {
-    const result = anthropicToOpenAIResponses(multiTurnAnthropicReq, "gpt-5.1");
-    const input = result.input as Array<{ type: string; role: string }>;
-    expect(input[0].role).toBe("system");
-    expect(input).toHaveLength(4); // system + 3 messages
+  it("extracts system field as leading system message", () => {
+    const result = anthropicToOpenAIChat(multiTurnAnthropicReq, "gpt-5.1");
+    expect(result.messages[0].role).toBe("system");
+    expect(result.messages[0].content).toBe("You are a helpful math assistant.");
+    // system + 3 conversation messages
+    expect(result.messages).toHaveLength(4);
+  });
+
+  it("multi-turn conversation preserves order", () => {
+    const result = anthropicToOpenAIChat(multiTurnAnthropicReq, "gpt-5.1");
+    // messages[0] = system, [1] = user, [2] = assistant, [3] = user
+    expect(result.messages[1].role).toBe("user");
+    expect(result.messages[2].role).toBe("assistant");
+    expect(result.messages[3].role).toBe("user");
+  });
+
+  it("converts tool_use blocks to tool_calls on assistant message", () => {
+    const result = anthropicToOpenAIChat(toolAnthropicReq, "gpt-5.1");
+    const assistantMsg = result.messages.find((m) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg!.tool_calls).toHaveLength(1);
+    expect(assistantMsg!.tool_calls![0].id).toBe("tool_123");
+    expect(assistantMsg!.tool_calls![0].function.name).toBe("get_weather");
+    expect(assistantMsg!.tool_calls![0].function.arguments).toBe(
+      JSON.stringify({ city: "Paris" })
+    );
+  });
+
+  it("converts tool_result blocks to tool role messages", () => {
+    const result = anthropicToOpenAIChat(toolAnthropicReq, "gpt-5.1");
+    const toolMsg = result.messages.find((m) => m.role === "tool");
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.tool_call_id).toBe("tool_123");
+    expect(toolMsg!.content).toBe("Sunny, 22°C");
+  });
+
+  it("converts tools to OpenAI function format", () => {
+    const result = anthropicToOpenAIChat(toolAnthropicReq, "gpt-5.1");
+    expect(result.tools).toHaveLength(1);
+    expect(result.tools![0].type).toBe("function");
+    expect(result.tools![0].function.name).toBe("get_weather");
+    expect(result.tools![0].function.parameters).toEqual(
+      toolAnthropicReq.tools![0].input_schema
+    );
   });
 
   it("converts tool_choice auto -> 'auto'", () => {
-    const result = anthropicToOpenAIResponses(toolAnthropicReq, "gpt-5.1");
+    const result = anthropicToOpenAIChat(toolAnthropicReq, "gpt-5.1");
     expect(result.tool_choice).toBe("auto");
   });
 
   it("converts tool_choice any -> 'required'", () => {
     const req = { ...toolAnthropicReq, tool_choice: { type: "any" as const } };
-    const result = anthropicToOpenAIResponses(req, "gpt-5.1");
+    const result = anthropicToOpenAIChat(req, "gpt-5.1");
     expect(result.tool_choice).toBe("required");
   });
 
-  it("converts tool_choice tool -> {type: function, name}", () => {
-    const req = { ...toolAnthropicReq, tool_choice: { type: "tool" as const, name: "get_weather" } };
-    const result = anthropicToOpenAIResponses(req, "gpt-5.1");
-    expect(result.tool_choice).toEqual({ type: "function", name: "get_weather" });
+  it("converts tool_choice tool -> {type: function, function: {name}}", () => {
+    const req = {
+      ...toolAnthropicReq,
+      tool_choice: { type: "tool" as const, name: "get_weather" },
+    };
+    const result = anthropicToOpenAIChat(req, "gpt-5.1");
+    expect(result.tool_choice).toEqual({
+      type: "function",
+      function: { name: "get_weather" },
+    });
   });
 
-  it("converts tools correctly", () => {
-    const result = anthropicToOpenAIResponses(toolAnthropicReq, "gpt-5.1");
-    expect(result.tools).toHaveLength(1);
-    expect(result.tools![0].name).toBe("get_weather");
-    expect(result.tools![0].type).toBe("function");
+  it("maps stop_sequences to stop", () => {
+    const req: AnthropicMessagesRequest = {
+      ...simpleAnthropicReq,
+      stop_sequences: ["STOP", "END"],
+    };
+    const result = anthropicToOpenAIChat(req, "gpt-5.1");
+    expect(result.stop).toEqual(["STOP", "END"]);
   });
 
-  it("converts tool_result to function_call_output", () => {
-    const result = anthropicToOpenAIResponses(toolAnthropicReq, "gpt-5.1");
-    const input = result.input as Array<{ type: string; call_id?: string; output?: string }>;
-    const funcOutput = input.find((i) => i.type === "function_call_output");
-    expect(funcOutput).toBeDefined();
-    expect(funcOutput?.call_id).toBe("tool_123");
-    expect(funcOutput?.output).toBe("Sunny, 22°C");
+  it("maps single stop_sequence to string stop", () => {
+    const req: AnthropicMessagesRequest = {
+      ...simpleAnthropicReq,
+      stop_sequences: ["STOP"],
+    };
+    const result = anthropicToOpenAIChat(req, "gpt-5.1");
+    expect(result.stop).toBe("STOP");
   });
 
-  it("converts tool_use blocks to function_call items (not text placeholders)", () => {
-    // Multi-turn: assistant previously made a tool call (tool_use block)
-    const reqWithToolUse: AnthropicMessagesRequest = {
+  it("converts image blocks to image_url content parts", () => {
+    const req: AnthropicMessagesRequest = {
       model: "claude-sonnet-4-5",
       messages: [
-        { role: "user", content: "What's the weather in Paris?" },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool_use",
-              id: "tool_abc",
-              name: "get_weather",
-              input: { city: "Paris" },
-            },
-          ],
-        },
         {
           role: "user",
           content: [
+            { type: "text", text: "Describe this image:" },
             {
-              type: "tool_result",
-              tool_use_id: "tool_abc",
-              content: "Sunny, 22°C",
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "abc123",
+              },
             },
           ],
         },
       ],
       max_tokens: 512,
     };
-
-    const result = anthropicToOpenAIResponses(reqWithToolUse, "gpt-5.1");
-    const input = result.input as Array<{ type: string; call_id?: string; name?: string; arguments?: string; output?: string }>;
-
-    // Should have a function_call item for the tool_use block
-    const funcCall = input.find((i) => i.type === "function_call");
-    expect(funcCall).toBeDefined();
-    expect(funcCall?.call_id).toBe("tool_abc");
-    expect(funcCall?.name).toBe("get_weather");
-    // arguments should be a JSON string of the input
-    expect(funcCall?.arguments).toBe(JSON.stringify({ city: "Paris" }));
-
-    // Should NOT have any text placeholder like "[tool_use: get_weather]"
-    const messageParts = input.filter((i) => i.type === "message");
-    for (const part of messageParts) {
-      const content = (part as { type: string; content?: unknown }).content;
-      if (typeof content === "string") {
-        expect(content).not.toContain("[tool_use:");
-      } else if (Array.isArray(content)) {
-        for (const c of content as Array<{ type: string; text?: string }>) {
-          if (c.type === "output_text" || c.type === "input_text") {
-            expect(c.text ?? "").not.toContain("[tool_use:");
-          }
-        }
-      }
-    }
-
-    // Should also have function_call_output for the tool_result
-    const funcOutput = input.find((i) => i.type === "function_call_output");
-    expect(funcOutput).toBeDefined();
-    expect(funcOutput?.call_id).toBe("tool_abc");
-    expect(funcOutput?.output).toBe("Sunny, 22°C");
+    const result = anthropicToOpenAIChat(req, "gpt-5.1");
+    const userMsg = result.messages[0];
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    const parts = userMsg.content as Array<{ type: string; image_url?: { url: string } }>;
+    const imgPart = parts.find((p) => p.type === "image_url");
+    expect(imgPart).toBeDefined();
+    expect(imgPart!.image_url!.url).toBe("data:image/png;base64,abc123");
   });
 });
 
-describe("chatCompletionsToOpenAIResponses", () => {
-  it("converts simple chat request", () => {
-    const result = chatCompletionsToOpenAIResponses(simpleChatReq, "gpt-5.1-2025-11-13");
+describe("chatToOpenAIChat (model rewrite passthrough)", () => {
+  it("rewrites model and passes through messages", () => {
+    const result = chatToOpenAIChat(simpleChatReq, "gpt-5.1-2025-11-13");
     expect(result.model).toBe("gpt-5.1-2025-11-13");
-    const input = result.input as Array<{ type: string; role: string }>;
-    expect(input[0].role).toBe("system");
-    expect(input[1].role).toBe("user");
+    expect(result.messages).toEqual(simpleChatReq.messages);
   });
 
-  it("converts tool call result to function_call_output", () => {
-    const result = chatCompletionsToOpenAIResponses(toolChatReq, "gpt-5.1");
-    const input = result.input as Array<{ type: string; call_id?: string }>;
-    const funcOutput = input.find((i) => i.type === "function_call_output");
-    expect(funcOutput).toBeDefined();
-    expect(funcOutput?.call_id).toBe("call_abc");
-  });
-
-  it("converts tools", () => {
-    const result = chatCompletionsToOpenAIResponses(toolChatReq, "gpt-5.1");
-    expect(result.tools).toHaveLength(1);
-    expect(result.tools![0].name).toBe("get_weather");
-  });
-
-  it("converts tool_choice string", () => {
-    const result = chatCompletionsToOpenAIResponses(toolChatReq, "gpt-5.1");
+  it("passes through tools and tool_choice", () => {
+    const result = chatToOpenAIChat(toolChatReq, "gpt-5.1-2025-11-13");
+    expect(result.tools).toEqual(toolChatReq.tools);
     expect(result.tool_choice).toBe("auto");
   });
 
-  it("extracts assistant tool_calls into standalone function_call items, not a text placeholder", () => {
-    const result = chatCompletionsToOpenAIResponses(toolChatReq, "gpt-5.1");
-    const input = result.input as Array<{
-      type: string;
-      call_id?: string;
-      name?: string;
-      arguments?: string;
-      role?: string;
-      content?: unknown;
-    }>;
-
-    const functionCall = input.find((i) => i.type === "function_call");
-    expect(functionCall).toBeDefined();
-    expect(functionCall?.call_id).toBe("call_abc");
-    expect(functionCall?.name).toBe("get_weather");
-    expect(functionCall?.arguments).toBe('{"city":"Paris"}');
-
-    // The assistant message must NOT appear as a plain message item carrying
-    // the tool call (that would mean the call_id/name/arguments were lost).
-    const assistantMessageItems = input.filter(
-      (i) => i.type === "message" && i.role === "assistant"
-    );
-    for (const item of assistantMessageItems) {
-      const serialized = JSON.stringify(item.content ?? "");
-      expect(serialized).not.toContain("get_weather");
-      expect(serialized).not.toContain("tool_use");
-    }
-
-    // function_call must come before its corresponding function_call_output,
-    // matching the actual conversation order.
-    const callIndex = input.findIndex((i) => i.type === "function_call");
-    const outputIndex = input.findIndex((i) => i.type === "function_call_output");
-    expect(callIndex).toBeGreaterThanOrEqual(0);
-    expect(outputIndex).toBeGreaterThan(callIndex);
+  it("passes through temperature, top_p, max_tokens, stop, stream", () => {
+    const req: ChatCompletionsRequest = {
+      model: "gpt-5.1",
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 256,
+      stop: ["END"],
+      stream: true,
+    };
+    const result = chatToOpenAIChat(req, "gpt-5.1-upstream");
+    expect(result.temperature).toBe(0.7);
+    expect(result.top_p).toBe(0.9);
+    expect(result.max_tokens).toBe(256);
+    expect(result.stop).toEqual(["END"]);
+    expect(result.stream).toBe(true);
   });
 });
 

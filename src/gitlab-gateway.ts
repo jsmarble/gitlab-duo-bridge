@@ -17,7 +17,7 @@ import { config } from "./config.ts";
 const ANTHROPIC_PROXY_URL =
   "https://cloud.gitlab.com/ai/v1/proxy/anthropic/v1/messages";
 const OPENAI_PROXY_URL =
-  "https://cloud.gitlab.com/ai/v1/proxy/openai/v1/responses";
+  "https://cloud.gitlab.com/ai/v1/proxy/openai/v1/chat/completions";
 
 async function buildHeaders(
   extra: Record<string, string> = {}
@@ -61,7 +61,7 @@ export async function callAnthropicProxy(
 }
 
 /**
- * Call the OpenAI Responses proxy. Returns the raw Response for streaming.
+ * Call the OpenAI Chat Completions proxy. Returns the raw Response for streaming.
  * Invalidates the direct-access token on 401.
  */
 export async function callOpenAIProxy(

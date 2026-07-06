@@ -1,7 +1,7 @@
 /**
  * Internal normalized streaming event model.
  *
- * All upstream SSE streams (Anthropic and OpenAI Responses) are decoded into
+ * All upstream SSE streams (Anthropic and OpenAI Chat Completions) are decoded into
  * this union before being re-encoded into the client-facing wire format.
  * This keeps translation logic to one place and makes the codec testable
  * in isolation.

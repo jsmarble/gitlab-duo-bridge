@@ -133,13 +133,20 @@ Model Registry Lookup
                      GitLab Direct Access Token (cached, single-flight)
                           │
                           ▼
-                     POST cloud.gitlab.com/ai/v1/proxy/openai/v1/responses
+                     POST cloud.gitlab.com/ai/v1/proxy/openai/v1/chat/completions
                           │
                           ▼
-                     Decode OpenAI Responses SSE → Internal Events
+                     Decode OpenAI Chat Completions SSE → Internal Events
 
 Internal Events → Re-encode to client's expected format (Anthropic or OpenAI Chat)
 ```
+
+The bridge uses a **normalized internal event model** (`InternalEvent` union) as the common currency between all upstream decoders and downstream encoders. This means:
+
+- `/v1/messages` with a Claude model → Anthropic Messages upstream → Anthropic SSE decoder → re-encode as Anthropic Messages response
+- `/v1/messages` with a GPT model → OpenAI Chat Completions upstream → Chat Completions decoder → re-encode as Anthropic Messages response
+- `/v1/chat/completions` with a Claude model → Anthropic Messages upstream → Anthropic SSE decoder → re-encode as Chat Completions response
+- `/v1/chat/completions` with a GPT model → OpenAI Chat Completions upstream → Chat Completions decoder → re-encode as Chat Completions response
 
 ## Development
 

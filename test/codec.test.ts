@@ -8,8 +8,9 @@ import {
   decodeAnthropicJSON,
 } from "../src/codec/anthropic-decode.ts";
 import {
-  decodeOpenAIResponsesStream,
-} from "../src/codec/openai-responses-decode.ts";
+  decodeOpenAIChatStream,
+  decodeOpenAIChatJSON,
+} from "../src/codec/openai-chat-decode.ts";
 import {
   encodeAnthropicSSE,
   encodeAnthropicJSON,
@@ -82,50 +83,41 @@ data: {"type":"message_stop"}
 
 `;
 
-// ---- Canned OpenAI Responses SSE stream ----
+// ---- Canned OpenAI Chat Completions SSE stream (text) ----
 
-const OPENAI_RESPONSES_SSE = `event: response.created
-data: {"type":"response.created","response":{"id":"resp_01","model":"gpt-5.1-2025-11-13","status":"in_progress"}}
+const OPENAI_CHAT_SSE = `data: {"id":"chatcmpl-01","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
 
-event: response.output_item.added
-data: {"type":"response.output_item.added","item":{"type":"message","id":"item_01"}}
+data: {"id":"chatcmpl-01","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
 
-event: response.content_part.added
-data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+data: {"id":"chatcmpl-01","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"content":", world!"},"finish_reason":null}]}
 
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","delta":"Hello"}
+data: {"id":"chatcmpl-01","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","delta":", world!"}
+data: {"id":"chatcmpl-01","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}
 
-event: response.output_item.done
-data: {"type":"response.output_item.done","item":{"type":"message","id":"item_01","status":"completed"}}
-
-event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_01","model":"gpt-5.1-2025-11-13","status":"completed","usage":{"input_tokens":8,"output_tokens":4}}}
+data: [DONE]
 
 `;
 
-// ---- Canned OpenAI Responses SSE with tool call ----
+// ---- Canned OpenAI Chat Completions SSE stream (tool calls) ----
+// Note: JSON-encoded argument fragments use \\\" to produce \" in the string,
+// which is then a valid JSON-escaped quote inside the outer JSON data payload.
 
-const OPENAI_RESPONSES_TOOL_SSE = `event: response.created
-data: {"type":"response.created","response":{"id":"resp_02","model":"gpt-5.1-2025-11-13","status":"in_progress"}}
+const OPENAI_CHAT_TOOL_SSE = `data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}
 
-event: response.output_item.added
-data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_01","call_id":"call_abc","name":"get_weather"}}
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
 
-event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","item_id":"call_abc","delta":"city_arg_part1"}
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"city\\":"}}]},"finish_reason":null}]}
 
-event: response.function_call_arguments.delta
-data: {"type":"response.function_call_arguments.delta","item_id":"call_abc","delta":"city_arg_part2"}
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_def","type":"function","function":{"name":"get_time","arguments":""}}]},"finish_reason":null}]}
 
-event: response.output_item.done
-data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_01","call_id":"call_abc","name":"get_weather","status":"completed"}}
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Paris\\"}"}}]},"finish_reason":null}]}
 
-event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_02","status":"completed","usage":{"input_tokens":5,"output_tokens":3}}}
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\\"tz\\":\\"UTC\\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-02","object":"chat.completion.chunk","created":1700000000,"model":"gpt-5.1-2025-11-13","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
 
 `;
 
@@ -173,55 +165,122 @@ describe("decodeAnthropicStream", () => {
   });
 });
 
-// ---- Tests: OpenAI Responses SSE decoder ----
+// ---- Tests: OpenAI Chat Completions SSE decoder ----
 
-describe("decodeOpenAIResponsesStream", () => {
-  it("emits start event", async () => {
+describe("decodeOpenAIChatStream", () => {
+  it("emits start event with model and id", async () => {
     const events = await collectEvents(
-      decodeOpenAIResponsesStream(makeStream(OPENAI_RESPONSES_SSE))
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_SSE))
     );
     const start = events.find((e) => e.type === "start");
     expect(start).toBeDefined();
     if (start?.type === "start") {
       expect(start.model).toBe("gpt-5.1-2025-11-13");
-      expect(start.id).toBe("resp_01");
+      expect(start.id).toBe("chatcmpl-01");
     }
   });
 
   it("emits text_delta events", async () => {
     const events = await collectEvents(
-      decodeOpenAIResponsesStream(makeStream(OPENAI_RESPONSES_SSE))
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_SSE))
     );
     const textDeltas = events.filter((e) => e.type === "text_delta");
     expect(textDeltas).toHaveLength(2);
     if (textDeltas[0].type === "text_delta") expect(textDeltas[0].text).toBe("Hello");
+    if (textDeltas[1].type === "text_delta") expect(textDeltas[1].text).toBe(", world!");
   });
 
-  it("emits stop event", async () => {
+  it("emits stop event with reason 'stop'", async () => {
     const events = await collectEvents(
-      decodeOpenAIResponsesStream(makeStream(OPENAI_RESPONSES_SSE))
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_SSE))
     );
     const stop = events.find((e) => e.type === "stop");
     expect(stop).toBeDefined();
     if (stop?.type === "stop") expect(stop.reason).toBe("stop");
   });
 
-  it("emits tool_call events", async () => {
+  it("emits usage event from trailing usage chunk", async () => {
     const events = await collectEvents(
-      decodeOpenAIResponsesStream(makeStream(OPENAI_RESPONSES_TOOL_SSE))
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_SSE))
     );
-    const toolStart = events.find((e) => e.type === "tool_call_start");
-    expect(toolStart).toBeDefined();
-    if (toolStart?.type === "tool_call_start") {
-      expect(toolStart.name).toBe("get_weather");
-      expect(toolStart.id).toBe("call_abc");
+    const usage = events.find((e) => e.type === "usage");
+    expect(usage).toBeDefined();
+    if (usage?.type === "usage") {
+      expect(usage.inputTokens).toBe(8);
+      expect(usage.outputTokens).toBe(4);
+    }
+  });
+
+  it("emits tool_call_start with correct id and name for each distinct index", async () => {
+    const events = await collectEvents(
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_TOOL_SSE))
+    );
+    const toolStarts = events.filter((e) => e.type === "tool_call_start");
+    expect(toolStarts).toHaveLength(2);
+
+    const start0 = toolStarts.find(
+      (e) => e.type === "tool_call_start" && e.index === 0
+    );
+    expect(start0).toBeDefined();
+    if (start0?.type === "tool_call_start") {
+      expect(start0.id).toBe("call_abc");
+      expect(start0.name).toBe("get_weather");
     }
 
-    const toolDeltas = events.filter((e) => e.type === "tool_call_delta");
-    expect(toolDeltas.length).toBeGreaterThan(0);
+    const start1 = toolStarts.find(
+      (e) => e.type === "tool_call_start" && e.index === 1
+    );
+    expect(start1).toBeDefined();
+    if (start1?.type === "tool_call_start") {
+      expect(start1.id).toBe("call_def");
+      expect(start1.name).toBe("get_time");
+    }
+  });
 
-    const toolEnd = events.find((e) => e.type === "tool_call_end");
-    expect(toolEnd).toBeDefined();
+  it("emits tool_call_delta events for argument fragments", async () => {
+    const events = await collectEvents(
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_TOOL_SSE))
+    );
+    const deltas = events.filter((e) => e.type === "tool_call_delta");
+    expect(deltas.length).toBeGreaterThan(0);
+
+    // Check index 0 deltas accumulate the weather args
+    const deltas0 = deltas.filter(
+      (e) => e.type === "tool_call_delta" && e.index === 0
+    );
+    const accumulated0 = deltas0
+      .map((e) => (e.type === "tool_call_delta" ? e.argsDelta : ""))
+      .join("");
+    expect(accumulated0).toContain("Paris");
+
+    // Check index 1 deltas
+    const deltas1 = deltas.filter(
+      (e) => e.type === "tool_call_delta" && e.index === 1
+    );
+    expect(deltas1.length).toBeGreaterThan(0);
+  });
+
+  it("synthesizes tool_call_end for each started tool call at finish_reason", async () => {
+    const events = await collectEvents(
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_TOOL_SSE))
+    );
+    const toolEnds = events.filter((e) => e.type === "tool_call_end");
+    // Two tool calls started -> two ends synthesized
+    expect(toolEnds).toHaveLength(2);
+    const endIndices = toolEnds.map((e) =>
+      e.type === "tool_call_end" ? e.index : -1
+    );
+    expect(endIndices).toContain(0);
+    expect(endIndices).toContain(1);
+  });
+
+  it("emits stop event with reason 'tool_calls'", async () => {
+    const events = await collectEvents(
+      decodeOpenAIChatStream(makeStream(OPENAI_CHAT_TOOL_SSE))
+    );
+    const stop = events.find((e) => e.type === "stop");
+    expect(stop).toBeDefined();
+    if (stop?.type === "stop") expect(stop.reason).toBe("tool_calls");
   });
 });
 
@@ -260,6 +319,86 @@ describe("decodeAnthropicJSON", () => {
     const events = Array.from(decodeAnthropicJSON(response));
     expect(events.some((e) => e.type === "tool_call_start")).toBe(true);
     expect(events.some((e) => e.type === "tool_call_end")).toBe(true);
+    const stop = events.find((e) => e.type === "stop");
+    if (stop?.type === "stop") expect(stop.reason).toBe("tool_calls");
+  });
+});
+
+// ---- Tests: OpenAI Chat JSON decoder ----
+
+describe("decodeOpenAIChatJSON", () => {
+  it("decodes text response", () => {
+    const response = {
+      id: "chatcmpl-01",
+      model: "gpt-5.1-2025-11-13",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "Hello!" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    };
+    const events = Array.from(decodeOpenAIChatJSON(response));
+    const start = events.find((e) => e.type === "start");
+    expect(start).toBeDefined();
+    if (start?.type === "start") {
+      expect(start.id).toBe("chatcmpl-01");
+      expect(start.model).toBe("gpt-5.1-2025-11-13");
+    }
+    const textDelta = events.find((e) => e.type === "text_delta");
+    expect(textDelta).toBeDefined();
+    if (textDelta?.type === "text_delta") expect(textDelta.text).toBe("Hello!");
+    const stop = events.find((e) => e.type === "stop");
+    expect(stop).toBeDefined();
+    if (stop?.type === "stop") expect(stop.reason).toBe("stop");
+    const usage = events.find((e) => e.type === "usage");
+    expect(usage).toBeDefined();
+    if (usage?.type === "usage") {
+      expect(usage.inputTokens).toBe(5);
+      expect(usage.outputTokens).toBe(3);
+    }
+  });
+
+  it("decodes tool_calls response", () => {
+    const response = {
+      id: "chatcmpl-02",
+      model: "gpt-5.1-2025-11-13",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_abc",
+                type: "function",
+                function: { name: "get_weather", arguments: '{"city":"Paris"}' },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    };
+    const events = Array.from(decodeOpenAIChatJSON(response));
+    const toolStart = events.find((e) => e.type === "tool_call_start");
+    expect(toolStart).toBeDefined();
+    if (toolStart?.type === "tool_call_start") {
+      expect(toolStart.id).toBe("call_abc");
+      expect(toolStart.name).toBe("get_weather");
+      expect(toolStart.index).toBe(0);
+    }
+    const toolDelta = events.find((e) => e.type === "tool_call_delta");
+    expect(toolDelta).toBeDefined();
+    if (toolDelta?.type === "tool_call_delta") {
+      expect(toolDelta.argsDelta).toBe('{"city":"Paris"}');
+    }
+    const toolEnd = events.find((e) => e.type === "tool_call_end");
+    expect(toolEnd).toBeDefined();
     const stop = events.find((e) => e.type === "stop");
     if (stop?.type === "stop") expect(stop.reason).toBe("tool_calls");
   });

@@ -19,24 +19,11 @@ import { handleModels } from "./routes/models.ts";
 import { handleMessages } from "./routes/messages.ts";
 import { handleChatCompletions } from "./routes/chat-completions.ts";
 import { handleAdmin } from "./routes/admin.ts";
+import { anthropicError, openAIError } from "./errors.ts";
 import { log } from "./logger.ts";
 
 // Load persisted state before accepting requests
 await loadState();
-
-function openAIError(message: string, status: number): Response {
-  return Response.json(
-    { error: { message, type: "invalid_request_error", param: null, code: null } },
-    { status }
-  );
-}
-
-function anthropicError(message: string, status: number): Response {
-  return Response.json(
-    { type: "error", error: { type: "invalid_request_error", message } },
-    { status }
-  );
-}
 
 const server = Bun.serve({
   port: config.port,
@@ -70,35 +57,29 @@ const server = Bun.serve({
         if (!authResult.ok) {
           if (path === "/v1/messages") {
             response = anthropicError(
-              authResult.error ?? "Unauthorized",
-              401
+              401,
+              "authentication_error",
+              authResult.error ?? "Unauthorized"
             );
           } else {
-            response = openAIError(authResult.error ?? "Unauthorized", 401);
+            response = openAIError(
+              401,
+              "authentication_error",
+              authResult.error ?? "Unauthorized"
+            );
           }
         } else if (path === "/v1/models" && method === "GET") {
           response = handleModels();
         } else if (path === "/v1/messages" && method === "POST") {
-          // Peek at model for activity log (best-effort, don't fail on parse error)
-          try {
-            const cloned = req.clone();
-            const body = (await cloned.json()) as { model?: string };
-            model = body.model;
-          } catch {
-            // ignore
-          }
-          response = await handleMessages(req);
+          const result = await handleMessages(req);
+          response = result.response;
+          model = result.model;
         } else if (path === "/v1/chat/completions" && method === "POST") {
-          try {
-            const cloned = req.clone();
-            const body = (await cloned.json()) as { model?: string };
-            model = body.model;
-          } catch {
-            // ignore
-          }
-          response = await handleChatCompletions(req);
+          const result = await handleChatCompletions(req);
+          response = result.response;
+          model = result.model;
         } else {
-          response = openAIError("Method not allowed", 405);
+          response = openAIError(405, "invalid_request_error", "Method not allowed");
         }
       } else {
         response = Response.json({ error: "Not found" }, { status: 404 });

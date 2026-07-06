@@ -13,59 +13,53 @@ import {
   decodeAnthropicJSON,
 } from "../codec/anthropic-decode.ts";
 import {
-  decodeOpenAIResponsesStream,
-  decodeOpenAIResponsesJSON,
-} from "../codec/openai-responses-decode.ts";
+  decodeOpenAIChatStream,
+  decodeOpenAIChatJSON,
+} from "../codec/openai-chat-decode.ts";
 import {
   encodeAnthropicSSE,
   encodeAnthropicJSON,
 } from "../codec/anthropic-encode.ts";
 import {
   anthropicToAnthropic,
-  anthropicToOpenAIResponses,
+  anthropicToOpenAIChat,
   type AnthropicMessagesRequest,
 } from "../codec/request-translate.ts";
+import { anthropicError } from "../errors.ts";
 import { log } from "../logger.ts";
 
-function anthropicError(
-  type: string,
-  message: string,
-  status: number
-): Response {
-  return Response.json(
-    { type: "error", error: { type, message } },
-    { status }
-  );
-}
-
-export async function handleMessages(req: Request): Promise<Response> {
+export async function handleMessages(
+  req: Request
+): Promise<{ response: Response; model?: string }> {
   let body: AnthropicMessagesRequest;
   try {
     body = (await req.json()) as AnthropicMessagesRequest;
   } catch {
-    return anthropicError(
-      "invalid_request_error",
-      "Invalid JSON body",
-      400
-    );
+    return {
+      response: anthropicError(400, "invalid_request_error", "Invalid JSON body"),
+    };
   }
 
   const modelId = body.model;
   if (!modelId) {
-    return anthropicError(
-      "invalid_request_error",
-      "Missing required field: model",
-      400
-    );
+    return {
+      response: anthropicError(
+        400,
+        "invalid_request_error",
+        "Missing required field: model"
+      ),
+    };
   }
 
   const modelEntry = lookupModel(modelId);
   if (!modelEntry) {
-    return anthropicError(
-      "invalid_request_error",
-      `Unknown model: ${modelId}`,
-      400
-    );
+    return {
+      response: anthropicError(
+        400,
+        "invalid_request_error",
+        `Unknown model: ${modelId}`
+      ),
+    };
   }
 
   const isStreaming = body.stream === true;
@@ -79,87 +73,100 @@ export async function handleMessages(req: Request): Promise<Response> {
       if (!resp.ok) {
         const errText = await resp.text().catch(() => "Unknown error");
         log("error", `[messages] Anthropic upstream error: ${resp.status} — ${errText}`);
-        return anthropicError(
-          "api_error",
-          `GitLab AI Gateway returned status ${resp.status}`,
-          resp.status >= 500 ? 502 : resp.status
-        );
+        return {
+          response: anthropicError(
+            resp.status >= 500 ? 502 : resp.status,
+            "api_error",
+            `GitLab AI Gateway returned status ${resp.status}`
+          ),
+          model: modelId,
+        };
       }
 
       if (isStreaming) {
         if (!resp.body) {
-          return anthropicError("api_error", "Empty response body", 502);
+          return {
+            response: anthropicError(502, "api_error", "Empty response body"),
+            model: modelId,
+          };
         }
         const events = decodeAnthropicStream(resp.body);
         const stream = encodeAnthropicSSE(events);
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-          },
-        });
+        return {
+          response: new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }),
+          model: modelId,
+        };
       } else {
         const json = (await resp.json()) as Record<string, unknown>;
         const events = (async function* () {
           yield* decodeAnthropicJSON(json);
         })();
         const result = await encodeAnthropicJSON(events);
-        return Response.json(result);
+        return { response: Response.json(result), model: modelId };
       }
     } else {
-      // openai backend — translate Anthropic -> OpenAI Responses
-      const upstreamReq = anthropicToOpenAIResponses(
-        body,
-        modelEntry.upstreamModel
-      );
+      // openai backend — translate Anthropic -> OpenAI Chat Completions
+      const upstreamReq = anthropicToOpenAIChat(body, modelEntry.upstreamModel);
       const resp = await callOpenAIProxy(upstreamReq);
 
       if (!resp.ok) {
         const errText = await resp.text().catch(() => "Unknown error");
         log("error", `[messages] OpenAI upstream error: ${resp.status} — ${errText}`);
-        return anthropicError(
-          "api_error",
-          `GitLab AI Gateway returned status ${resp.status}`,
-          resp.status >= 500 ? 502 : resp.status
-        );
+        return {
+          response: anthropicError(
+            resp.status >= 500 ? 502 : resp.status,
+            "api_error",
+            `GitLab AI Gateway returned status ${resp.status}`
+          ),
+          model: modelId,
+        };
       }
 
       if (isStreaming) {
         if (!resp.body) {
-          return anthropicError("api_error", "Empty response body", 502);
+          return {
+            response: anthropicError(502, "api_error", "Empty response body"),
+            model: modelId,
+          };
         }
-        const events = decodeOpenAIResponsesStream(resp.body);
+        const events = decodeOpenAIChatStream(resp.body);
         const stream = encodeAnthropicSSE(events);
-        return new Response(stream, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-          },
-        });
+        return {
+          response: new Response(stream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          }),
+          model: modelId,
+        };
       } else {
         const json = (await resp.json()) as Record<string, unknown>;
         const events = (async function* () {
-          yield* decodeOpenAIResponsesJSON(json);
+          yield* decodeOpenAIChatJSON(json);
         })();
         const result = await encodeAnthropicJSON(events);
-        return Response.json(result);
+        return { response: Response.json(result), model: modelId };
       }
     }
   } catch (err) {
     if (err instanceof GitLabPatMissingError) {
-      return anthropicError(
-        "authentication_error",
-        err.message,
-        401
-      );
+      return {
+        response: anthropicError(401, "authentication_error", err.message),
+        model: modelId,
+      };
     }
     log("error", "[messages] Unhandled error:", err instanceof Error ? err.message : String(err));
-    return anthropicError(
-      "api_error",
-      "Internal server error",
-      500
-    );
+    return {
+      response: anthropicError(500, "api_error", "Internal server error"),
+      model: modelId,
+    };
   }
 }

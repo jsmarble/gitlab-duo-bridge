@@ -1,11 +1,11 @@
 /**
  * Request shape translators between Anthropic Messages, OpenAI Chat Completions,
- * and OpenAI Responses API formats.
+ * and upstream formats.
  *
  * Translators:
  * 1. anthropicToAnthropic: identity with model rewrite
- * 2. anthropicToOpenAIResponses: Anthropic Messages -> OpenAI Responses
- * 3. chatCompletionsToOpenAIResponses: OpenAI Chat Completions -> OpenAI Responses
+ * 2. anthropicToOpenAIChat: Anthropic Messages -> OpenAI Chat Completions
+ * 3. chatToOpenAIChat: OpenAI Chat Completions -> OpenAI Chat Completions (model rewrite passthrough)
  * 4. chatCompletionsToAnthropic: OpenAI Chat Completions -> Anthropic Messages
  */
 
@@ -103,46 +103,6 @@ export interface ChatCompletionsRequest {
   tool_choice?: string | { type: "function"; function: { name: string } };
 }
 
-// ---- OpenAI Responses API types ----
-
-export interface OpenAIResponsesRequest {
-  model: string;
-  input: OpenAIResponsesInput;
-  stream?: boolean;
-  max_output_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  tools?: OpenAIResponsesTool[];
-  tool_choice?: string | { type: "function"; name: string };
-  truncation?: string;
-}
-
-export type OpenAIResponsesInput =
-  | string
-  | OpenAIResponsesInputItem[];
-
-export type OpenAIResponsesInputItem =
-  | { type: "message"; role: "user" | "assistant" | "system"; content: OpenAIResponsesContent }
-  | { type: "function_call"; call_id: string; name: string; arguments: string }
-  | { type: "function_call_output"; call_id: string; output: string };
-
-export type OpenAIResponsesContent =
-  | string
-  | OpenAIResponsesContentPart[];
-
-export type OpenAIResponsesContentPart =
-  | { type: "input_text"; text: string }
-  | { type: "output_text"; text: string }
-  | { type: "input_image"; image_url: string; detail?: string }
-  | { type: "input_file"; file_id?: string; filename?: string; file_data?: string };
-
-export interface OpenAIResponsesTool {
-  type: "function";
-  name: string;
-  description?: string;
-  parameters?: Record<string, unknown>;
-}
-
 // ---- Helper: extract system text from Anthropic system field ----
 
 function extractSystemText(
@@ -151,55 +111,6 @@ function extractSystemText(
   if (!system) return undefined;
   if (typeof system === "string") return system;
   return system.map((b) => b.text).join("\n");
-}
-
-// ---- Helper: convert Anthropic content to OpenAI Responses content ----
-
-function anthropicContentToResponsesContent(
-  content: AnthropicMessageContent
-): OpenAIResponsesContent {
-  if (typeof content === "string") return content;
-
-  return content
-    .filter((block) => block.type !== "tool_use" && block.type !== "tool_result")
-    .map((block): OpenAIResponsesContentPart => {
-      if (block.type === "text") {
-        return { type: "input_text", text: block.text };
-      } else if (block.type === "image") {
-        const src = block.source;
-        if (src.type === "base64") {
-          return {
-            type: "input_image",
-            image_url: `data:${src.media_type ?? "image/jpeg"};base64,${src.data ?? ""}`,
-          };
-        } else {
-          return { type: "input_image", image_url: src.url ?? "" };
-        }
-      }
-      // Fallback
-      return { type: "input_text", text: "" };
-    });
-}
-
-// ---- Helper: convert Chat message content to Responses content ----
-
-function chatContentToResponsesContent(
-  content: ChatMessage["content"]
-): OpenAIResponsesContent {
-  if (content === null) return "";
-  if (typeof content === "string") return content;
-  return content.map((part): OpenAIResponsesContentPart => {
-    if (part.type === "text") {
-      return { type: "input_text", text: part.text ?? "" };
-    } else if (part.type === "image_url") {
-      return {
-        type: "input_image",
-        image_url: part.image_url?.url ?? "",
-        detail: part.image_url?.detail,
-      };
-    }
-    return { type: "input_text", text: "" };
-  });
 }
 
 // ---- Translator 1: Anthropic -> Anthropic (identity with model rewrite) ----
@@ -211,201 +122,194 @@ export function anthropicToAnthropic(
   return { ...req, model: upstreamModel };
 }
 
-// ---- Translator 2: Anthropic Messages -> OpenAI Responses ----
+// ---- Translator 2: Anthropic Messages -> OpenAI Chat Completions ----
 
-export function anthropicToOpenAIResponses(
+function anthropicContentToChatContent(
+  content: AnthropicMessageContent
+): string | ChatContentPart[] {
+  if (typeof content === "string") return content;
+
+  // Filter out tool_use and tool_result blocks (handled separately)
+  const textAndImageBlocks = content.filter(
+    (b) => b.type !== "tool_use" && b.type !== "tool_result"
+  );
+
+  if (textAndImageBlocks.length === 0) return "";
+
+  return textAndImageBlocks.map((block): ChatContentPart => {
+    if (block.type === "text") {
+      return { type: "text", text: block.text };
+    } else if (block.type === "image") {
+      const src = block.source;
+      if (src.type === "base64") {
+        return {
+          type: "image_url",
+          image_url: {
+            url: `data:${src.media_type ?? "image/jpeg"};base64,${src.data ?? ""}`,
+          },
+        };
+      } else {
+        return { type: "image_url", image_url: { url: src.url ?? "" } };
+      }
+    }
+    // Fallback
+    return { type: "text", text: "" };
+  });
+}
+
+export function anthropicToOpenAIChat(
   req: AnthropicMessagesRequest,
   upstreamModel: string
-): OpenAIResponsesRequest {
-  const inputItems: OpenAIResponsesInputItem[] = [];
+): ChatCompletionsRequest {
+  const messages: ChatMessage[] = [];
 
   // Add system message if present
   const systemText = extractSystemText(req.system);
   if (systemText) {
-    inputItems.push({
-      type: "message",
-      role: "system",
-      content: systemText,
-    });
+    messages.push({ role: "system", content: systemText });
   }
 
   // Convert messages
   for (const msg of req.messages) {
-    if (msg.role === "user" || msg.role === "assistant") {
-      // Check for tool_result blocks — those become function_call_output items
+    if (msg.role === "assistant") {
       const content = msg.content;
       if (Array.isArray(content)) {
-        const toolResults = content.filter((b) => b.type === "tool_result");
+        // Check for tool_use blocks -> tool_calls on assistant message
         const toolUseBlocks = content.filter((b) => b.type === "tool_use");
-        const otherBlocks = content.filter(
-          (b) => b.type !== "tool_result" && b.type !== "tool_use"
-        );
+        const otherBlocks = content.filter((b) => b.type !== "tool_use" && b.type !== "tool_result");
 
-        for (const tr of toolResults) {
-          if (tr.type === "tool_result") {
-            const text =
-              typeof tr.content === "string"
-                ? tr.content
-                : Array.isArray(tr.content)
-                ? tr.content
-                    .map((b) => (b.type === "text" ? b.text : ""))
-                    .join("")
-                : "";
-            inputItems.push({
-              type: "function_call_output",
-              call_id: tr.tool_use_id,
-              output: text,
-            });
-          }
-        }
-
-        // Convert tool_use blocks to function_call items
-        for (const tu of toolUseBlocks) {
-          if (tu.type === "tool_use") {
-            inputItems.push({
-              type: "function_call",
-              call_id: tu.id,
-              name: tu.name,
-              arguments: JSON.stringify(tu.input),
-            });
-          }
-        }
+        const chatMsg: ChatMessage = { role: "assistant", content: null };
 
         if (otherBlocks.length > 0) {
-          inputItems.push({
-            type: "message",
-            role: msg.role,
-            content: anthropicContentToResponsesContent(otherBlocks),
+          const converted = anthropicContentToChatContent(otherBlocks);
+          if (typeof converted === "string") {
+            chatMsg.content = converted || null;
+          } else {
+            chatMsg.content = converted.length > 0 ? converted : null;
+          }
+        }
+
+        if (toolUseBlocks.length > 0) {
+          chatMsg.tool_calls = toolUseBlocks
+            .filter((b) => b.type === "tool_use")
+            .map((b) => {
+              if (b.type !== "tool_use") throw new Error("unreachable");
+              return {
+                id: b.id,
+                type: "function" as const,
+                function: {
+                  name: b.name,
+                  arguments: JSON.stringify(b.input),
+                },
+              };
+            });
+        }
+
+        messages.push(chatMsg);
+      } else {
+        messages.push({
+          role: "assistant",
+          content: anthropicContentToChatContent(content),
+        });
+      }
+    } else if (msg.role === "user") {
+      const content = msg.content;
+      if (Array.isArray(content)) {
+        // Check for tool_result blocks -> tool role messages
+        const toolResultBlocks = content.filter((b) => b.type === "tool_result");
+        const otherBlocks = content.filter((b) => b.type !== "tool_result");
+
+        // Emit one tool message per tool_result block
+        for (const tr of toolResultBlocks) {
+          if (tr.type !== "tool_result") continue;
+          const text =
+            typeof tr.content === "string"
+              ? tr.content
+              : Array.isArray(tr.content)
+              ? tr.content
+                  .map((b) => (b.type === "text" ? b.text : ""))
+                  .join("")
+              : "";
+          messages.push({
+            role: "tool",
+            tool_call_id: tr.tool_use_id,
+            content: text,
+          });
+        }
+
+        // Emit remaining content as user message if any
+        if (otherBlocks.length > 0) {
+          messages.push({
+            role: "user",
+            content: anthropicContentToChatContent(otherBlocks),
           });
         }
       } else {
-        inputItems.push({
-          type: "message",
-          role: msg.role,
-          content: anthropicContentToResponsesContent(content),
+        messages.push({
+          role: "user",
+          content: anthropicContentToChatContent(content),
         });
       }
     }
   }
 
   // Convert tools
-  const tools: OpenAIResponsesTool[] | undefined = req.tools?.map((t) => ({
+  const tools: ChatTool[] | undefined = req.tools?.map((t) => ({
     type: "function" as const,
-    name: t.name,
-    description: t.description,
-    parameters: t.input_schema,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    },
   }));
 
   // Convert tool_choice
-  let toolChoice: OpenAIResponsesRequest["tool_choice"] | undefined;
+  let toolChoice: ChatCompletionsRequest["tool_choice"] | undefined;
   if (req.tool_choice) {
     if (req.tool_choice.type === "auto") {
       toolChoice = "auto";
     } else if (req.tool_choice.type === "any") {
       toolChoice = "required";
     } else if (req.tool_choice.type === "tool") {
-      toolChoice = { type: "function", name: req.tool_choice.name };
+      toolChoice = { type: "function", function: { name: req.tool_choice.name } };
     }
   }
 
+  const stop = req.stop_sequences
+    ? req.stop_sequences.length === 1
+      ? req.stop_sequences[0]
+      : req.stop_sequences
+    : undefined;
+
   return {
     model: upstreamModel,
-    input: inputItems,
+    messages,
     stream: req.stream,
-    max_output_tokens: req.max_tokens,
+    max_tokens: req.max_tokens,
     temperature: req.temperature,
     top_p: req.top_p,
+    stop,
     tools: tools && tools.length > 0 ? tools : undefined,
     tool_choice: toolChoice,
   };
 }
 
-// ---- Translator 3: Chat Completions -> OpenAI Responses ----
+// ---- Translator 3: Chat Completions -> Chat Completions (model rewrite passthrough) ----
 
-export function chatCompletionsToOpenAIResponses(
+export function chatToOpenAIChat(
   req: ChatCompletionsRequest,
   upstreamModel: string
-): OpenAIResponsesRequest {
-  const inputItems: OpenAIResponsesInputItem[] = [];
-
-  for (const msg of req.messages) {
-    if (msg.role === "tool") {
-      // Tool result
-      inputItems.push({
-        type: "function_call_output",
-        call_id: msg.tool_call_id ?? "",
-        output:
-          typeof msg.content === "string"
-            ? msg.content
-            : msg.content
-            ? msg.content.map((p) => p.text ?? "").join("")
-            : "",
-      });
-    } else if (msg.role === "assistant") {
-      // Assistant messages may carry both prior tool calls and text content.
-      // The Responses API expects prior tool calls as standalone `function_call`
-      // items, not embedded inside a message item (mirrors chatCompletionsToAnthropic's
-      // tool_use handling below).
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
-        for (const tc of msg.tool_calls) {
-          inputItems.push({
-            type: "function_call",
-            call_id: tc.id,
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          });
-        }
-        if (msg.content) {
-          inputItems.push({
-            type: "message",
-            role: "assistant",
-            content: chatContentToResponsesContent(msg.content),
-          });
-        }
-      } else {
-        inputItems.push({
-          type: "message",
-          role: "assistant",
-          content: chatContentToResponsesContent(msg.content),
-        });
-      }
-    } else if (msg.role === "system" || msg.role === "user") {
-      inputItems.push({
-        type: "message",
-        role: msg.role,
-        content: chatContentToResponsesContent(msg.content),
-      });
-    }
-  }
-
-  const tools: OpenAIResponsesTool[] | undefined = req.tools?.map((t) => ({
-    type: "function" as const,
-    name: t.function.name,
-    description: t.function.description,
-    parameters: t.function.parameters,
-  }));
-
-  let toolChoice: OpenAIResponsesRequest["tool_choice"] | undefined;
-  if (req.tool_choice) {
-    if (typeof req.tool_choice === "string") {
-      toolChoice = req.tool_choice;
-    } else {
-      toolChoice = {
-        type: "function",
-        name: req.tool_choice.function.name,
-      };
-    }
-  }
-
+): ChatCompletionsRequest {
   return {
     model: upstreamModel,
-    input: inputItems,
+    messages: req.messages,
     stream: req.stream,
-    max_output_tokens: req.max_tokens,
+    max_tokens: req.max_tokens,
     temperature: req.temperature,
     top_p: req.top_p,
-    tools: tools && tools.length > 0 ? tools : undefined,
-    tool_choice: toolChoice,
+    stop: req.stop,
+    tools: req.tools,
+    tool_choice: req.tool_choice,
   };
 }
 

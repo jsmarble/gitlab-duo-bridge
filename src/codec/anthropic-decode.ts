@@ -13,7 +13,7 @@
  */
 
 import type { InternalEvent, StopReason } from "../events.ts";
-import { parseSseLines } from "./sse-parse.ts";
+import { readSseEvents } from "./sse-parse.ts";
 
 function mapAnthropicStopReason(reason: string | null | undefined): StopReason {
   switch (reason) {
@@ -33,54 +33,12 @@ function mapAnthropicStopReason(reason: string | null | undefined): StopReason {
 export async function* decodeAnthropicStream(
   body: ReadableStream<Uint8Array>
 ): AsyncGenerator<InternalEvent> {
-  const decoder = new TextDecoder();
-  const reader = body.getReader();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete SSE messages (separated by double newline)
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop() ?? "";
-
-      for (const part of parts) {
-        if (!part.trim()) continue;
-        for (const line of parseSseLines(part + "\n\n")) {
-          if (!line.data || line.data === "[DONE]") continue;
-          let parsed: Record<string, unknown>;
-          try {
-            parsed = JSON.parse(line.data) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          yield* processAnthropicEvent(parsed);
-        }
-      }
-    }
-
-    // Flush remaining buffer
-    if (buffer.trim()) {
-      for (const line of parseSseLines(buffer)) {
-        if (!line.data || line.data === "[DONE]") continue;
-        let parsed: Record<string, unknown>;
-        try {
-          parsed = JSON.parse(line.data) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        yield* processAnthropicEvent(parsed);
-      }
-    }
-  } finally {
-    reader.releaseLock();
+  for await (const evt of readSseEvents(body)) {
+    yield* processAnthropicEvent(evt);
   }
 }
 
-function* processAnthropicEvent(
+export function* processAnthropicEvent(
   event: Record<string, unknown>
 ): Generator<InternalEvent> {
   const type = event.type as string;

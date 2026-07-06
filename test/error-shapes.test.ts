@@ -19,7 +19,7 @@ describe("Anthropic-style error shape (/v1/messages)", () => {
       body: "not json",
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleMessages(req);
+    const { response } = await handleMessages(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     expect(body.type).toBe("error");
@@ -34,7 +34,7 @@ describe("Anthropic-style error shape (/v1/messages)", () => {
       body: JSON.stringify({ messages: [], max_tokens: 100 }),
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleMessages(req);
+    const { response } = await handleMessages(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     expect(body.type).toBe("error");
@@ -50,7 +50,7 @@ describe("Anthropic-style error shape (/v1/messages)", () => {
       body: JSON.stringify({ model: "nonexistent-model", messages: [], max_tokens: 100 }),
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleMessages(req);
+    const { response } = await handleMessages(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     expect(body.type).toBe("error");
@@ -67,7 +67,7 @@ describe("OpenAI-style error shape (/v1/chat/completions)", () => {
       body: "not json",
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleChatCompletions(req);
+    const { response } = await handleChatCompletions(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     expect(typeof (body.error as Record<string, unknown>)?.message).toBe("string");
@@ -85,7 +85,7 @@ describe("OpenAI-style error shape (/v1/chat/completions)", () => {
       body: JSON.stringify({ messages: [] }),
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleChatCompletions(req);
+    const { response } = await handleChatCompletions(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     const err = body.error as Record<string, unknown>;
@@ -100,10 +100,35 @@ describe("OpenAI-style error shape (/v1/chat/completions)", () => {
       body: JSON.stringify({ model: "nonexistent-model", messages: [] }),
       headers: { "Content-Type": "application/json" },
     });
-    const response = await handleChatCompletions(req);
+    const { response } = await handleChatCompletions(req);
     expect(response.status).toBe(400);
     const body = await response.json() as Record<string, unknown>;
     const err = body.error as Record<string, unknown>;
     expect(err.type).toBe("invalid_request_error");
+  });
+});
+
+describe("shared error helpers (src/errors.ts)", () => {
+  it("anthropicError produces correct shape", async () => {
+    const { anthropicError } = await import("../src/errors.ts");
+    const resp = anthropicError(400, "invalid_request_error", "bad input");
+    expect(resp.status).toBe(400);
+    const body = await resp.json() as Record<string, unknown>;
+    expect(body.type).toBe("error");
+    const err = body.error as Record<string, unknown>;
+    expect(err.type).toBe("invalid_request_error");
+    expect(err.message).toBe("bad input");
+  });
+
+  it("openAIError produces correct shape", async () => {
+    const { openAIError } = await import("../src/errors.ts");
+    const resp = openAIError(401, "authentication_error", "unauthorized");
+    expect(resp.status).toBe(401);
+    const body = await resp.json() as Record<string, unknown>;
+    const err = body.error as Record<string, unknown>;
+    expect(err.message).toBe("unauthorized");
+    expect(err.type).toBe("authentication_error");
+    expect(err.param).toBeNull();
+    expect(err.code).toBeNull();
   });
 });

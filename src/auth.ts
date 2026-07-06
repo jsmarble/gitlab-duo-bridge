@@ -42,11 +42,21 @@ export interface AuthResult {
 }
 
 /**
- * Check the Authorization header against PROXY_API_KEY.
+ * Check incoming credentials against PROXY_API_KEY.
+ *
+ * Accepts either authentication style, since the bridge exposes both an
+ * OpenAI-compatible surface (which uses `Authorization: Bearer <key>`) and an
+ * Anthropic-compatible surface (which uses the `x-api-key: <key>` header):
+ *   - `Authorization: Bearer <key>`  (preferred when present)
+ *   - `x-api-key: <key>`
+ *
  * Returns {ok: false} if the key is missing, empty, or doesn't match.
  * Never reveals whether the key exists or what it is.
  */
-export function checkBearerAuth(authHeader: string | null): AuthResult {
+export function checkBearerAuth(
+  authHeader: string | null,
+  apiKeyHeader?: string | null
+): AuthResult {
   const expectedKey = config.proxyApiKey;
 
   // Fail-closed: if no key is configured, reject everything
@@ -54,16 +64,18 @@ export function checkBearerAuth(authHeader: string | null): AuthResult {
     return { ok: false, error: "Proxy API key not configured" };
   }
 
-  if (!authHeader) {
-    return { ok: false, error: "Missing Authorization header" };
-  }
-
+  // Extract the presented key from whichever supported header carries it.
+  let providedKey: string | null = null;
   const prefix = "Bearer ";
-  if (!authHeader.startsWith(prefix)) {
-    return { ok: false, error: "Invalid Authorization header format" };
+  if (authHeader && authHeader.startsWith(prefix)) {
+    providedKey = authHeader.slice(prefix.length);
+  } else if (apiKeyHeader) {
+    providedKey = apiKeyHeader;
   }
 
-  const providedKey = authHeader.slice(prefix.length);
+  if (!providedKey) {
+    return { ok: false, error: "Missing or malformed credentials" };
+  }
 
   if (!timingSafeEqualSync(providedKey, expectedKey)) {
     return { ok: false, error: "Invalid API key" };

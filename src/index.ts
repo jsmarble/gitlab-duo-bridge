@@ -53,7 +53,10 @@ const server = Bun.serve({
         path === "/v1/messages" ||
         path === "/v1/chat/completions"
       ) {
-        const authResult = checkBearerAuth(req.headers.get("Authorization"));
+        const authResult = checkBearerAuth(
+          req.headers.get("Authorization"),
+          req.headers.get("x-api-key")
+        );
         if (!authResult.ok) {
           if (path === "/v1/messages") {
             response = anthropicError(

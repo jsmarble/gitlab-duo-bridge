@@ -180,6 +180,10 @@ The GitLab PAT is stored in `state.json` in the `DATA_DIR` volume. **Restrict vo
 ### PROXY_API_KEY
 This is the **only thing gating proxy access**. Use a strong random value (e.g. `openssl rand -hex 32`). It is never logged or displayed in the dashboard.
 
+Clients may present it in either style — the bridge accepts both because it exposes both API surfaces:
+- `Authorization: Bearer <key>` (OpenAI-style)
+- `x-api-key: <key>` (Anthropic-style)
+
 ### Admin Dashboard
 The `/admin` routes have **no authentication** — they rely entirely on network isolation. **Do not expose port 3000 publicly.** In the example compose file, the port is bound to `127.0.0.1` only. In production, consider putting the admin dashboard behind a VPN or SSH tunnel.
 

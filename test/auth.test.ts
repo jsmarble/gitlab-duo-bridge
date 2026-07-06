@@ -86,4 +86,43 @@ describe("checkBearerAuth", () => {
       expect(result.error).not.toContain("wrong-key");
     }
   });
+
+  // ---- x-api-key (Anthropic-style) support ----
+
+  it("returns ok=true for valid key via x-api-key header", () => {
+    const result = checkBearerAuth(null, "test-secret-key-12345");
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns ok=false for wrong key via x-api-key header", () => {
+    const result = checkBearerAuth(null, "wrong-key");
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns ok=false when both headers are absent", () => {
+    const result = checkBearerAuth(null, null);
+    expect(result.ok).toBe(false);
+  });
+
+  it("prefers a valid Authorization: Bearer over x-api-key", () => {
+    const result = checkBearerAuth("Bearer test-secret-key-12345", "wrong-key");
+    expect(result.ok).toBe(true);
+  });
+
+  it("falls back to x-api-key when Authorization is not a Bearer token", () => {
+    // Bare (non-Bearer) Authorization value is ignored; x-api-key carries the key.
+    const result = checkBearerAuth("test-secret-key-12345", "test-secret-key-12345");
+    expect(result.ok).toBe(true);
+  });
+
+  it("FAIL-CLOSED: empty PROXY_API_KEY rejects x-api-key too", () => {
+    const savedKey = mockProxyApiKey;
+    mockProxyApiKey = "";
+    try {
+      expect(checkBearerAuth(null, "some-key").ok).toBe(false);
+      expect(checkBearerAuth(null, "").ok).toBe(false);
+    } finally {
+      mockProxyApiKey = savedKey;
+    }
+  });
 });

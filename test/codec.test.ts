@@ -564,6 +564,40 @@ describe("encodeOpenAIChatSSE", () => {
     // Must NOT contain [DONE] — client should not think stream completed successfully
     expect(text).not.toContain("data: [DONE]");
   });
+
+  it("emits a final usage chunk (tokens/cost) before [DONE]", async () => {
+    async function* events(): AsyncGenerator<InternalEvent> {
+      yield { type: "start", model: "claude-sonnet-4-6", id: "chatcmpl-u" };
+      yield { type: "usage", inputTokens: 12, outputTokens: 0 };
+      yield { type: "text_delta", text: "hi" };
+      yield { type: "usage", inputTokens: 0, outputTokens: 7 };
+      yield { type: "stop", reason: "stop" };
+    }
+
+    const stream = encodeOpenAIChatSSE(events());
+    const text = await readStream(stream);
+
+    // A usage-only chunk (empty choices + usage) must precede [DONE].
+    const usageIdx = text.indexOf('"usage"');
+    const doneIdx = text.indexOf("data: [DONE]");
+    expect(usageIdx).toBeGreaterThan(-1);
+    expect(doneIdx).toBeGreaterThan(usageIdx);
+    expect(text).toContain('"prompt_tokens":12');
+    expect(text).toContain('"completion_tokens":7');
+    expect(text).toContain('"total_tokens":19');
+    expect(text).toContain('"choices":[]');
+  });
+
+  it("omits the usage chunk when no usage events were seen", async () => {
+    async function* events(): AsyncGenerator<InternalEvent> {
+      yield { type: "start", model: "gpt-5.1", id: "chatcmpl-nou" };
+      yield { type: "text_delta", text: "hi" };
+      yield { type: "stop", reason: "stop" };
+    }
+    const text = await readStream(encodeOpenAIChatSSE(events()));
+    expect(text).not.toContain('"usage"');
+    expect(text).toContain("data: [DONE]");
+  });
 });
 
 // ---- Tests: OpenAI Chat JSON encoder ----

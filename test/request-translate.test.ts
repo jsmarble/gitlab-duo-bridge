@@ -313,6 +313,21 @@ describe("chatToOpenAIChat (model rewrite passthrough)", () => {
     expect(result.max_completion_tokens).toBe(128);
     expect(result.max_tokens).toBeUndefined();
   });
+
+  it("requests upstream usage on streaming requests (stream_options.include_usage)", () => {
+    const streaming = chatToOpenAIChat(
+      { model: "gpt-5.1", stream: true, messages: [{ role: "user", content: "hi" }] },
+      "gpt-5.1-upstream"
+    );
+    expect(streaming.stream_options?.include_usage).toBe(true);
+
+    const nonStreaming = chatToOpenAIChat(
+      { model: "gpt-5.1", messages: [{ role: "user", content: "hi" }] },
+      "gpt-5.1-upstream"
+    );
+    // No stream_options forced when the client isn't streaming.
+    expect(nonStreaming.stream_options?.include_usage).toBeUndefined();
+  });
 });
 
 describe("chatCompletionsToAnthropic", () => {

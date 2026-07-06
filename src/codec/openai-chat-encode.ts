@@ -36,6 +36,10 @@ export function encodeOpenAIChatSSE(
       let created = Math.floor(Date.now() / 1000);
       // Track tool calls by index
       const toolCallsStarted = new Set<number>();
+      // Accumulate usage to emit as a final chunk (so clients see tokens/cost).
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let hasUsage = false;
 
       try {
         for await (const event of events) {
@@ -161,10 +165,36 @@ export function encodeOpenAIChatSSE(
             }
 
             case "usage":
-              // Usage in streaming is sent as a final chunk by some providers
-              // but not required by the spec; skip for now
+              // Accumulate; emitted as a dedicated final chunk below so clients
+              // (and cost trackers) can read token counts on streamed responses.
+              if (event.inputTokens > 0) {
+                inputTokens = event.inputTokens;
+                hasUsage = true;
+              }
+              if (event.outputTokens > 0) {
+                outputTokens = event.outputTokens;
+                hasUsage = true;
+              }
               break;
           }
+        }
+        // Emit a final usage-only chunk (OpenAI's stream_options.include_usage
+        // shape: empty choices + usage) so streamed responses report tokens/cost.
+        if (hasUsage) {
+          controller.enqueue(
+            sseData({
+              id,
+              object: "chat.completion.chunk",
+              created,
+              model,
+              choices: [],
+              usage: {
+                prompt_tokens: inputTokens,
+                completion_tokens: outputTokens,
+                total_tokens: inputTokens + outputTokens,
+              },
+            })
+          );
         }
         // Only send [DONE] on the success path (normal loop completion)
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));

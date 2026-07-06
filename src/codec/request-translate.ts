@@ -95,6 +95,7 @@ export interface ChatCompletionsRequest {
   model: string;
   messages: ChatMessage[];
   stream?: boolean;
+  stream_options?: { include_usage?: boolean };
   max_tokens?: number;
   max_completion_tokens?: number;
   temperature?: number;
@@ -294,6 +295,8 @@ export function anthropicToOpenAIChat(
     model: upstreamModel,
     messages,
     stream: req.stream,
+    // Ask the OpenAI proxy to include usage on the final streamed chunk.
+    stream_options: req.stream ? { include_usage: true } : undefined,
     // GitLab's OpenAI (GPT-5) proxy rejects the legacy `max_tokens` param and
     // requires `max_completion_tokens`.
     max_completion_tokens: req.max_tokens,
@@ -315,6 +318,11 @@ export function chatToOpenAIChat(
     model: upstreamModel,
     messages: req.messages,
     stream: req.stream,
+    // Ask the OpenAI proxy to include usage on the final streamed chunk so the
+    // client sees token counts / cost (OpenAI omits usage from streams otherwise).
+    stream_options: req.stream
+      ? { include_usage: true, ...req.stream_options }
+      : req.stream_options,
     // Normalize to max_completion_tokens (GPT-5 models reject max_tokens).
     // Accept either field from the client.
     max_completion_tokens: req.max_completion_tokens ?? req.max_tokens,

@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  gitlab-duo-bridge:
+    image: gitlab-duo-bridge:latest
+    # Or build locally:
+    # build: .
+    restart: unless-stopped
+    ports:
+      # Expose admin dashboard on localhost only — do NOT expose publicly
+      - "127.0.0.1:3000:3000"
+    environment:
+      # REQUIRED: Set a strong random key. Clients must present this as Bearer token.
+      PROXY_API_KEY: "${PROXY_API_KEY:?PROXY_API_KEY is required}"
+      PORT: "3000"
+      DATA_DIR: "/data"
+      LOG_LEVEL: "info"
+    volumes:
+      - duo_bridge_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Placeholder for the "Manifest" service that consumes this bridge.
+  # Point Manifest's custom provider at:
+  #   - Anthropic-compatible: http://gitlab-duo-bridge:3000/v1/messages
+  #   - OpenAI-compatible:    http://gitlab-duo-bridge:3000/v1/chat/completions
+  # with Authorization: Bearer <PROXY_API_KEY>
+  manifest:
+    image: your-manifest-image:latest
+    restart: unless-stopped
+    environment:
+      # Example: point Manifest at the bridge
+      ANTHROPIC_BASE_URL: "http://gitlab-duo-bridge:3000"
+      ANTHROPIC_API_KEY: "${PROXY_API_KEY}"
+      # Or for OpenAI-compatible mode:
+      OPENAI_BASE_URL: "http://gitlab-duo-bridge:3000/v1"
+      OPENAI_API_KEY: "${PROXY_API_KEY}"
+    networks:
+      - internal
+    depends_on:
+      gitlab-duo-bridge:
+        condition: service_healthy
+
+volumes:
+  duo_bridge_data:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge

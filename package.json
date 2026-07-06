@@ -1,0 +1,18 @@
+{
+  "name": "gitlab-duo-bridge",
+  "version": "0.1.0",
+  "description": "Bridges GitLab Duo AI Gateway to OpenAI/Anthropic-compatible API",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build:docker": "docker build -t gitlab-duo-bridge ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0"
+  }
+}

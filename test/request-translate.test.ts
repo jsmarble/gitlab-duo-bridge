@@ -8,6 +8,7 @@ import {
   anthropicToOpenAIChat,
   chatToOpenAIChat,
   chatCompletionsToAnthropic,
+  type AnthropicContentBlock,
   type AnthropicMessagesRequest,
   type ChatCompletionsRequest,
 } from "../src/codec/request-translate.ts";
@@ -422,5 +423,97 @@ describe("chatCompletionsToAnthropic", () => {
     // Anthropic has no portable "none"; the only safe mapping is to drop tools.
     expect(result.tools).toBeUndefined();
     expect(result.tool_choice).toBeUndefined();
+  });
+
+  // Anthropic requires strict user/assistant alternation, and all tool_result
+  // blocks for one assistant turn's parallel tool_use calls must live in a
+  // SINGLE user message. OpenAI represents each result as its own `role: tool`
+  // message, so the translator must consolidate them.
+  it("consolidates parallel tool results into one user message", () => {
+    const req: ChatCompletionsRequest = {
+      model: "claude-sonnet-4-5",
+      messages: [
+        { role: "user", content: "Weather in SF and NYC?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_sf", type: "function", function: { name: "get_weather", arguments: '{"city":"SF"}' } },
+            { id: "call_ny", type: "function", function: { name: "get_weather", arguments: '{"city":"NYC"}' } },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_sf", content: "SF: 68F" },
+        { role: "tool", tool_call_id: "call_ny", content: "NYC: 45F" },
+      ],
+    };
+    const result = chatCompletionsToAnthropic(req, "upstream");
+
+    // Exactly one user message carries both tool_result blocks.
+    const toolResultUserMsgs = result.messages.filter(
+      (m) =>
+        m.role === "user" &&
+        Array.isArray(m.content) &&
+        m.content.some((b) => b.type === "tool_result")
+    );
+    expect(toolResultUserMsgs).toHaveLength(1);
+    const blocks = toolResultUserMsgs[0].content as AnthropicContentBlock[];
+    const trIds = blocks
+      .filter((b) => b.type === "tool_result")
+      .map((b) => (b.type === "tool_result" ? b.tool_use_id : ""));
+    expect(trIds).toEqual(["call_sf", "call_ny"]);
+  });
+
+  it("never emits two consecutive same-role messages (parallel tools)", () => {
+    const req: ChatCompletionsRequest = {
+      model: "claude-sonnet-4-5",
+      messages: [
+        { role: "user", content: "Weather in SF and NYC?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_sf", type: "function", function: { name: "get_weather", arguments: "{}" } },
+            { id: "call_ny", type: "function", function: { name: "get_weather", arguments: "{}" } },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_sf", content: "SF: 68F" },
+        { role: "tool", tool_call_id: "call_ny", content: "NYC: 45F" },
+        { role: "assistant", content: "SF is warmer." },
+      ],
+    };
+    const result = chatCompletionsToAnthropic(req, "upstream");
+    for (let i = 1; i < result.messages.length; i++) {
+      expect(result.messages[i].role).not.toBe(result.messages[i - 1].role);
+    }
+  });
+
+  it("merges a user follow-up after a tool result, tool_result first", () => {
+    const req: ChatCompletionsRequest = {
+      model: "claude-sonnet-4-5",
+      messages: [
+        { role: "user", content: "Weather?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_1", type: "function", function: { name: "get_weather", arguments: "{}" } },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "68F" },
+        { role: "user", content: "Thanks, now in Celsius?" },
+      ],
+    };
+    const result = chatCompletionsToAnthropic(req, "upstream");
+    // No consecutive same-role messages.
+    for (let i = 1; i < result.messages.length; i++) {
+      expect(result.messages[i].role).not.toBe(result.messages[i - 1].role);
+    }
+    // The merged user turn puts tool_result before any text block.
+    const merged = result.messages[result.messages.length - 1];
+    const blocks = merged.content as AnthropicContentBlock[];
+    expect(Array.isArray(blocks)).toBe(true);
+    const firstText = blocks.findIndex((b) => b.type === "text");
+    const lastToolResult = blocks.map((b) => b.type).lastIndexOf("tool_result");
+    expect(lastToolResult).toBeLessThan(firstText);
   });
 });

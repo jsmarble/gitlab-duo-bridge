@@ -369,6 +369,61 @@ function chatContentToAnthropicContent(
   });
 }
 
+// ---- Helper: coalesce consecutive same-role Anthropic messages ----
+//
+// Anthropic's Messages API requires strict user/assistant alternation and that
+// ALL tool_result blocks for one assistant turn's parallel tool_use calls live
+// in a SINGLE user message. OpenAI represents each tool result as its own
+// `role: "tool"` message, so a naive 1:1 translation produces consecutive user
+// messages (one per tool result), which Anthropic rejects / mishandles.
+//
+// This merges any run of same-role messages into one, and — per Anthropic's
+// formatting rules — orders tool_result blocks before any other content within
+// a user turn.
+function normalizeToBlocks(
+  content: AnthropicMessageContent
+): AnthropicContentBlock[] {
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : [];
+  }
+  return content;
+}
+
+function coalesceAnthropicMessages(
+  messages: AnthropicMessage[]
+): AnthropicMessage[] {
+  const out: AnthropicMessage[] = [];
+
+  for (const msg of messages) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === msg.role) {
+      // Merge into the previous same-role message.
+      prev.content = [
+        ...normalizeToBlocks(prev.content),
+        ...normalizeToBlocks(msg.content),
+      ];
+    } else {
+      out.push({ ...msg });
+    }
+  }
+
+  // Within any user turn containing tool results, tool_result blocks must come
+  // FIRST (Anthropic rejects text placed before tool_result blocks).
+  for (const msg of out) {
+    if (
+      msg.role === "user" &&
+      Array.isArray(msg.content) &&
+      msg.content.some((b) => b.type === "tool_result")
+    ) {
+      const toolResults = msg.content.filter((b) => b.type === "tool_result");
+      const rest = msg.content.filter((b) => b.type !== "tool_result");
+      msg.content = [...toolResults, ...rest];
+    }
+  }
+
+  return out;
+}
+
 export function chatCompletionsToAnthropic(
   req: ChatCompletionsRequest,
   upstreamModel: string
@@ -457,7 +512,7 @@ export function chatCompletionsToAnthropic(
 
   return {
     model: upstreamModel,
-    messages,
+    messages: coalesceAnthropicMessages(messages),
     system: systemText || undefined,
     max_tokens: req.max_tokens ?? 4096,
     stream: req.stream,
